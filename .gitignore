@@ -1,5 +1,5 @@
 # ============================================================================
-# PENELOPE — GITIGNORE (SECURITY, TEST ARTIFACTS & BUILD BOUNDARIES)
+# PENELOPE - GITIGNORE (SECURITY, PRIVATE TESTS & BUILD BOUNDARIES)
 # ============================================================================
 
 # 1. Environment Variables & Secrets (NEVER COMMIT)
@@ -14,8 +14,11 @@
 *.p12
 secrets/
 
-# 2. Unit Test Workspace, Fixtures, Generated Files & Reports (LOCAL ONLY)
-unit_test/
+# 2. Private Unit Tests & Internal Design Verification Scripts (LOCAL ONLY)
+unit_test/.private_tests/
+scripts/check-oxfords.mjs
+scripts/OXFORDS_LICENSE.txt
+scripts/OXFORDS_CREDITS.md
 
 # 3. Rust / Cargo Build Artifacts
 backend/target/

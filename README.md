@@ -7,9 +7,13 @@
 <p align="center">
   Warehouse inventory, stock ledger, and audit management system.<br>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-326E6E" alt="Apache 2.0 License"></a>
+  <img src="https://img.shields.io/badge/status-active%20development-CE7D36" alt="Status: Active Development">
 </p>
 
 ---
+
+> [!NOTE]
+> **Project Status:** Penelope is currently under active development. Interfaces, database schemas, and API endpoints are subject to change prior to the initial stable release.
 
 Penelope is a self-hosted warehouse inventory management system built with a Rust backend, a PostgreSQL relational ledger, and a React web interface. It tracks catalog SKUs, bin locations, stock movements, and security audit logs with strict transactional integrity.
 
@@ -30,18 +34,17 @@ Penelope is a self-hosted warehouse inventory management system built with a Rus
 | **Database** | PostgreSQL 16 |
 | **Cryptography** | Argon2id, AES-256-GCM, SHA-256 |
 | **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, TanStack Table & Query |
-| **Design System** | Oxfords specification (Tideline palette) |
 
 ## Repository Structure
 
 ```text
 .
-├── assets/                 # Fonts, Phosphor icons, Tideline schematics, and brand logos
+├── assets/                 # Fonts, icons, schematics, and brand logos
 ├── backend/                # Rust (Axum + SQLx) HTTP API server and SQL migrations
 ├── frontend/               # React + Vite + TypeScript web client
-├── scripts/                # Build and UI verification scripts (check-oxfords.mjs)
+├── unit_test/              # Public unit test suites, fixtures, and reports
 ├── .sample_env.env         # Environment configuration template
-├── THIRD_PARTY_NOTICES.md  # Licenses and attributions for bundled fonts and icons
+├── THIRD_PARTY_NOTICES.md  # Licenses and attributions for bundled assets
 └── LICENSE                 # Apache License 2.0
 ```
 
@@ -57,4 +60,4 @@ Set `DATABASE_URL`, `SESSION_SECRET`, and a 64-character hex `PENELOPE_MASTER_EN
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE). Third-party font, icon, and tooling notices are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Licensed under the [Apache License, Version 2.0](LICENSE). Third-party font and icon notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
