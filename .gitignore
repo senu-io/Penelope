@@ -16,6 +16,9 @@ secrets/
 
 # 2. Private Unit Tests & Internal Design Verification Scripts (LOCAL ONLY)
 unit_test/.private_tests/
+backend/tests/private_suite.rs
+frontend/**/*.private.test.ts
+frontend/**/*.private.test.tsx
 scripts/check-oxfords.mjs
 scripts/OXFORDS_LICENSE.txt
 scripts/OXFORDS_CREDITS.md

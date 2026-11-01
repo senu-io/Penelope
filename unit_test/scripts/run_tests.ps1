@@ -1,18 +1,23 @@
 param(
     [ValidateSet("backend", "frontend", "full")]
     [string]$Suite = "full",
-    [switch]$Private
+    [switch]$Private,
+    [string]$RepoRootOverride = ""
 )
 
 $ErrorActionPreference = "Continue"
 
 # Resolve [Penelope] repository root reliably regardless of whether this script
 # lives in unit_test/scripts/ or unit_test/.private_tests/scripts/
-$scriptDir = $PSScriptRoot
-if ($scriptDir -match '[\\/]\.private_tests[\\/]scripts$') {
-    $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\..\.."))
+if (-not [string]::IsNullOrWhiteSpace($RepoRootOverride)) {
+    $repoRoot = [System.IO.Path]::GetFullPath($RepoRootOverride)
 } else {
-    $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\.."))
+    $scriptDir = $PSScriptRoot
+    if ($scriptDir -match '[\\/]\.private_tests[\\/]scripts$') {
+        $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\..\.."))
+    } else {
+        $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\.."))
+    }
 }
 
 $baseUtDir = Join-Path $repoRoot "unit_test"
@@ -61,19 +66,20 @@ function Invoke-TestRunnerStep {
     $exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
     $sw.Stop()
 
-    # Count actual executed tests from runner output; 0 executed tests is an automatic FAIL
+    # Strip ANSI escape sequences before counting executed tests; 0 executed tests is an automatic FAIL
+    $cleanOutput = [regex]::Replace($output, '\x1B\[[0-9;]*[a-zA-Z]', '')
     $totalExecuted = 0
-    $regexMatches = [regex]::Matches($output, $CountPattern)
+    $regexMatches = [regex]::Matches($cleanOutput, $CountPattern)
     foreach ($m in $regexMatches) {
         $totalExecuted += [int]$m.Groups[1].Value
     }
 
     $status = if ($exitCode -eq 0 -and $totalExecuted -gt 0) { "PASS" } else { "FAIL" }
     if ($exitCode -eq 0 -and $totalExecuted -eq 0) {
-        $output = $output + "`r`n[ERROR] Command exited 0 but executed 0 tests. Vacuous PASS is forbidden."
+        $cleanOutput = $cleanOutput + "`r`n[ERROR] Command exited 0 but executed 0 tests. Vacuous PASS is forbidden."
         $exitCode = 1
     }
-    Add-StepResult -Name $Name -Status $status -ExitCode $exitCode -DurationMs $sw.ElapsedMilliseconds -TestsExecuted $totalExecuted -Output $output
+    Add-StepResult -Name $Name -Status $status -ExitCode $exitCode -DurationMs $sw.ElapsedMilliseconds -TestsExecuted $totalExecuted -Output $cleanOutput
 }
 
 if ($Suite -in @("backend", "full")) {
@@ -90,16 +96,26 @@ if ($Suite -in @("backend", "full")) {
             Pop-Location
         }
         if ($Private) {
-            Invoke-TestRunnerStep -Name "Rust Private & Ignored Edge-Case Tests" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
-                Push-Location (Join-Path $repoRoot "backend")
-                $env:PENELOPE_PRIVATE_TESTS = "1"
-                cargo test -- --include-ignored --nocapture
-                Pop-Location
+            $privateTargetFile = Join-Path $repoRoot "backend\tests\private_suite.rs"
+            $privateVaultFile = Join-Path $repoRoot "unit_test\.private_tests\backend\private_suite.rs"
+            if ((-not (Test-Path -LiteralPath $privateTargetFile)) -and (Test-Path -LiteralPath $privateVaultFile)) {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $privateTargetFile) | Out-Null
+                Copy-Item -LiteralPath $privateVaultFile -Destination $privateTargetFile -Force
+            }
+            if (Test-Path -LiteralPath $privateTargetFile) {
+                Invoke-TestRunnerStep -Name "Rust Isolated Private Integration Target (--test private_suite)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location (Join-Path $repoRoot "backend")
+                    $env:PENELOPE_PRIVATE_TESTS = "1"
+                    cargo test --test private_suite -- --nocapture
+                    Pop-Location
+                }
+            } else {
+                Add-StepResult -Name "Rust Isolated Private Integration Target (--test private_suite)" -Status "FAIL" -ExitCode 1 -DurationMs 0 -TestsExecuted 0 -Output "PRIVATE_TARGET_NOT_FOUND: Missing $privateTargetFile."
             }
         } else {
-            Invoke-TestRunnerStep -Name "Rust Unit & Integration Tests (cargo test)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+            Invoke-TestRunnerStep -Name "Rust Public Unit & DB Integration Tests (--lib --bins --test db_integrity_and_concurrency)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
                 Push-Location (Join-Path $repoRoot "backend")
-                cargo test -- --nocapture
+                cargo test --lib --bins --test db_integrity_and_concurrency -- --nocapture
                 Pop-Location
             }
         }
@@ -111,10 +127,18 @@ if ($Suite -in @("backend", "full")) {
 if ($Suite -in @("frontend", "full")) {
     $pkgJson = Join-Path $repoRoot "frontend\package.json"
     if (Test-Path -LiteralPath $pkgJson) {
-        Invoke-TestRunnerStep -Name "Frontend Unit Tests (vitest)" -CountPattern '(\d+)\s+passed' -Action {
-            Push-Location (Join-Path $repoRoot "frontend")
-            npm test -- --run
-            Pop-Location
+        if ($Private) {
+            Invoke-TestRunnerStep -Name "Frontend Isolated Private Tests (vitest private.config)" -CountPattern 'Tests\s+(\d+)\s+passed' -Action {
+                Push-Location (Join-Path $repoRoot "frontend")
+                npm.cmd run test:private
+                Pop-Location
+            }
+        } else {
+            Invoke-TestRunnerStep -Name "Frontend Public Unit Tests (vitest public)" -CountPattern 'Tests\s+(\d+)\s+passed' -Action {
+                Push-Location (Join-Path $repoRoot "frontend")
+                npm.cmd test
+                Pop-Location
+            }
         }
     } else {
         Add-StepResult -Name "Frontend Suite" -Status "FAIL" -ExitCode 1 -DurationMs 0 -TestsExecuted 0 -Output "SUITE_NOT_FOUND: Missing $pkgJson."
@@ -139,7 +163,9 @@ $reportObj = @{
     status    = $finalStatus
     steps     = $results
 }
-$reportObj | ConvertTo-Json -Depth 5 | Set-Content -Path $jsonPath -Encoding UTF8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$jsonText = $reportObj | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($jsonPath, $jsonText, $utf8NoBom)
 
 $md = @()
 $md += "# Penelope Test Report ($reportBase)"
@@ -163,6 +189,6 @@ foreach ($r in $results) {
     $md += '```'
 }
 
-$md -join "`r`n" | Set-Content -Path $mdPath -Encoding UTF8
+[System.IO.File]::WriteAllText($mdPath, ($md -join "`r`n"), $utf8NoBom)
 Write-Output "Generated report: $mdPath"
 if (-not $overallPass) { exit 1 }
