@@ -19,20 +19,20 @@ Penelope is a self-hosted warehouse inventory management system built with a Rus
 
 ## Capabilities
 
-- **Catalog and SKU Control:** Track SKUs, barcodes, categories, units of measure, bin coordinates, reorder thresholds, and integer-cent unit costs.
-- **Transactional Stock Ledger:** Every stock change (`Receive`, `Dispatch`, `Cycle Count`, `Damage`) executes inside a locked PostgreSQL transaction and records an append-only ledger entry.
+- **Catalog and SKU Control:** Track SKUs, barcodes, categories, base units of measure (`ea`, `box`, `pallet`, `kg`, `l`, `m`), fixed-point `NUMERIC(14, 4)` quantities, bin coordinates, reorder thresholds, and Moving Weighted Average (MWA) euro-cent (`EUR`) unit costs.
+- **Transactional Stock Ledger:** Every stock change (`Receive`, `Dispatch`, `Cycle Count`, `Damage`) executes idempotently through a locked PostgreSQL transaction that atomically updates the product balance, records an append-only ledger entry, and writes a security audit event.
 - **Operational Overview:** Monitor total inventory valuation, low-stock items below their reorder threshold, and recent stock movements from a single screen.
 - **Data Exchange (`data_io`):** Import and export catalog records, ledger history, and audit trails in RFC 4180 CSV and JSON formats.
 - **Barcode and Label Workflow:** Fast keyboard-wedge barcode lookup paired with printable Code-128 and QR bin labels.
-- **Security and Access Control:** Argon2id password hashing, HttpOnly session cookies, role-based access control (`Admin`, `Manager`, `Operator`), SHA-256 scoped API keys, and AES-256-GCM field encryption for confidential product notes.
+- **Security and Access Control:** Argon2id password hashing, HttpOnly session cookies with CSRF protection, role-based access control (`Admin`, `Manager`, `Operator`), 256-bit SHA-256 scoped API keys, least-privilege database role separation (`penelope_owner` vs `penelope_app`), and versioned AES-256-GCM field encryption with contextual AAD for confidential product notes.
 
 ## Technology Stack
 
 | Layer | Technology |
 | :--- | :--- |
-| **Backend** | Rust, Axum, Tokio, SQLx, Tower |
+| **Backend** | Rust, Axum, Tokio, SQLx, Tower, Rust Decimal |
 | **Database** | PostgreSQL 16 |
-| **Cryptography** | Argon2id, AES-256-GCM, SHA-256 |
+| **Cryptography** | Argon2id, Versioned AES-256-GCM + AAD, SHA-256 |
 | **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, TanStack Table & Query |
 
 ## Repository Structure
@@ -44,6 +44,7 @@ Penelope is a self-hosted warehouse inventory management system built with a Rus
 ├── frontend/               # React + Vite + TypeScript web client
 ├── unit_test/              # Public unit test suites, fixtures, and reports
 ├── .sample_env.env         # Environment configuration template
+├── TODO.md                 # Modular development checklist and commit log
 ├── THIRD_PARTY_NOTICES.md  # Licenses and attributions for bundled assets
 └── LICENSE                 # Apache License 2.0
 ```
@@ -56,7 +57,12 @@ Copy `.sample_env.env` to `.env` before starting the backend or container stack:
 cp .sample_env.env .env
 ```
 
-Set `DATABASE_URL`, `SESSION_SECRET`, and a 64-character hex `PENELOPE_MASTER_ENCRYPTION_KEY` in `.env`. Never commit `.env` files to version control.
+Configure the following in `.env`:
+- `MIGRATION_DATABASE_URL`: Privileged schema owner connection (`penelope_owner`) used exclusively for running database migrations.
+- `DATABASE_URL`: Least-privilege runtime connection (`penelope_app`) used by the Axum server.
+- `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned 256-bit (64-character hex) keyring for `AES-256-GCM` field encryption.
+
+Never commit `.env` files to version control.
 
 ## License
 
