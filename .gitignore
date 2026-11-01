@@ -20,11 +20,10 @@ scripts/check-oxfords.mjs
 scripts/OXFORDS_LICENSE.txt
 scripts/OXFORDS_CREDITS.md
 
-# 3. Rust / Cargo Build Artifacts
+# 3. Rust / Cargo Build Artifacts (Note: backend/Cargo.lock IS tracked for binary build reproducibility)
 backend/target/
 target/
 **/*.rs.bk
-Cargo.lock
 
 # 4. Node / Frontend Build Artifacts
 frontend/node_modules/
