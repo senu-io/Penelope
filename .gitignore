@@ -1,0 +1,54 @@
+# ============================================================================
+# PENELOPE — GITIGNORE (SECURITY, TEST ARTIFACTS & BUILD BOUNDARIES)
+# ============================================================================
+
+# 1. Environment Variables & Secrets (NEVER COMMIT)
+.env
+.env.*
+*.env
+!.sample_env.env
+*.pem
+*.key
+*.pfx
+*.crt
+*.p12
+secrets/
+
+# 2. Unit Test Workspace, Fixtures, Generated Files & Reports (LOCAL ONLY)
+unit_test/
+
+# 3. Rust / Cargo Build Artifacts
+backend/target/
+target/
+**/*.rs.bk
+Cargo.lock
+
+# 4. Node / Frontend Build Artifacts
+frontend/node_modules/
+node_modules/
+frontend/dist/
+dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 5. Database & Local Runtime Volumes
+postgres_data/
+*.db
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.dump
+
+# 6. OS & Editor Metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~

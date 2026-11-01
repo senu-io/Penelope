@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 120" fill="none">
+  <!-- Code-128 / Warehouse SKU Label Specimen (Tideline Palette) -->
+  <rect x="1" y="1" width="278" height="118" rx="6" fill="#FFFFFF" stroke="#111111" stroke-width="1.5"/>
+  <rect x="1" y="1" width="278" height="24" rx="5" fill="#326E6E"/>
+  <text x="12" y="17" fill="#FFFFFF" font-family="monospace" font-size="11" font-weight="700">PENELOPE WAREHOUSE · BIN A-04-02</text>
+  <rect x="218" y="5" width="52" height="16" rx="3" fill="#CE7D36"/>
+  <text x="244" y="16" text-anchor="middle" fill="#111111" font-family="monospace" font-size="10" font-weight="700">SKU</text>
+  <!-- Barcode Bars -->
+  <g fill="#111111" transform="translate(16, 36)">
+    <rect x="0" y="0" width="3" height="44"/>
+    <rect x="5" y="0" width="1.5" height="44"/>
+    <rect x="10" y="0" width="4.5" height="44"/>
+    <rect x="18" y="0" width="1.5" height="44"/>
+    <rect x="22" y="0" width="3" height="44"/>
+    <rect x="28" y="0" width="1.5" height="44"/>
+    <rect x="33" y="0" width="4.5" height="44"/>
+    <rect x="40" y="0" width="3" height="44"/>
+    <rect x="46" y="0" width="1.5" height="44"/>
+    <rect x="50" y="0" width="4.5" height="44"/>
+    <rect x="58" y="0" width="1.5" height="44"/>
+    <rect x="63" y="0" width="3" height="44"/>
+    <rect x="70" y="0" width="1.5" height="44"/>
+    <rect x="74" y="0" width="4.5" height="44"/>
+    <rect x="82" y="0" width="3" height="44"/>
+    <rect x="88" y="0" width="1.5" height="44"/>
+    <rect x="93" y="0" width="3" height="44"/>
+    <rect x="99" y="0" width="4.5" height="44"/>
+    <rect x="107" y="0" width="1.5" height="44"/>
+    <rect x="112" y="0" width="3" height="44"/>
+    <rect x="118" y="0" width="1.5" height="44"/>
+    <rect x="123" y="0" width="4.5" height="44"/>
+    <rect x="131" y="0" width="1.5" height="44"/>
+    <rect x="136" y="0" width="3" height="44"/>
+    <rect x="142" y="0" width="4.5" height="44"/>
+    <rect x="150" y="0" width="1.5" height="44"/>
+    <rect x="155" y="0" width="3" height="44"/>
+    <rect x="161" y="0" width="1.5" height="44"/>
+    <rect x="166" y="0" width="4.5" height="44"/>
+    <rect x="174" y="0" width="3" height="44"/>
+    <rect x="180" y="0" width="1.5" height="44"/>
+    <rect x="185" y="0" width="4.5" height="44"/>
+    <rect x="193" y="0" width="1.5" height="44"/>
+    <rect x="198" y="0" width="3" height="44"/>
+  </g>
+  <text x="16" y="98" fill="#111111" font-family="monospace" font-size="13" font-weight="700">HV-204-BRG</text>
+  <text x="140" y="98" fill="#6B6B6B" font-family="monospace" font-size="12">890142500192</text>
+</svg>

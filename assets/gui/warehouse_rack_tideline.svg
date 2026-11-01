@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 120" fill="none">
+  <!-- Tideline Oxfords Technical Schematic: Warehouse Bin & Rack Elevation -->
+  <rect x="12" y="12" width="216" height="96" rx="4" stroke="#E5E5E5" stroke-width="1" fill="#FAFAFA"/>
+  <!-- Rack Uprights -->
+  <line x1="36" y1="24" x2="36" y2="96" stroke="#326E6E" stroke-width="2"/>
+  <line x1="120" y1="24" x2="120" y2="96" stroke="#326E6E" stroke-width="2"/>
+  <line x1="204" y1="24" x2="204" y2="96" stroke="#326E6E" stroke-width="2"/>
+  <!-- Shelf Beams -->
+  <line x1="36" y1="48" x2="204" y2="48" stroke="#326E6E" stroke-width="1.5"/>
+  <line x1="36" y1="74" x2="204" y2="74" stroke="#326E6E" stroke-width="1.5"/>
+  <line x1="36" y1="96" x2="204" y2="96" stroke="#326E6E" stroke-width="1.5"/>
+  <!-- Parcels / Bins -->
+  <rect x="44" y="30" width="28" height="16" rx="1.5" fill="#C5CFCB" stroke="#326E6E" stroke-width="1"/>
+  <rect x="78" y="34" width="32" height="12" rx="1.5" fill="#326E6E"/>
+  <rect x="130" y="28" width="26" height="18" rx="1.5" fill="#C5CFCB" stroke="#326E6E" stroke-width="1"/>
+  <!-- Low-stock / Ember attention bin -->
+  <rect x="44" y="56" width="30" height="16" rx="1.5" fill="#CE7D36"/>
+  <rect x="130" y="54" width="36" height="18" rx="1.5" fill="#326E6E"/>
+  <rect x="172" y="58" width="22" height="14" rx="1.5" fill="#C5CFCB" stroke="#326E6E" stroke-width="1"/>
+  <rect x="44" y="80" width="66" height="14" rx="1.5" fill="#C5CFCB" stroke="#326E6E" stroke-width="1"/>
+  <rect x="130" y="80" width="64" height="14" rx="1.5" fill="#C5CFCB" stroke="#326E6E" stroke-width="1"/>
+</svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 80" fill="none">
+  <!-- Oxfords Palette Swatch: Tideline (#326E6E Lead, #CE7D36 Support, #C5CFCB Pop) -->
+  <rect x="0.5" y="0.5" width="359" height="79" rx="8" fill="#FFFFFF" stroke="#E5E5E5"/>
+  <rect x="12" y="12" width="180" height="56" rx="4" fill="#326E6E"/>
+  <text x="24" y="36" fill="#FFFFFF" font-family="monospace" font-size="12" font-weight="700">LEAD · #326E6E</text>
+  <text x="24" y="54" fill="#C5CFCB" font-family="sans-serif" font-size="11">Tideline Deep Teal (10-15%)</text>
+  <rect x="198" y="12" width="96" height="56" rx="4" fill="#CE7D36"/>
+  <text x="208" y="36" fill="#111111" font-family="monospace" font-size="11" font-weight="700">#CE7D36</text>
+  <text x="208" y="54" fill="#111111" font-family="sans-serif" font-size="11">Support (5-10%)</text>
+  <rect x="300" y="12" width="48" height="56" rx="4" fill="#C5CFCB"/>
+  <text x="306" y="36" fill="#111111" font-family="monospace" font-size="10" font-weight="700">#C5CFCB</text>
+  <text x="306" y="54" fill="#111111" font-family="sans-serif" font-size="10">Pop</text>
+</svg>
