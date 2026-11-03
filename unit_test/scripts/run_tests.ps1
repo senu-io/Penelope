@@ -23,7 +23,7 @@ if (-not [string]::IsNullOrWhiteSpace($RepoRootOverride)) {
 $baseUtDir = Join-Path $repoRoot "unit_test"
 $targetUtDir = if ($Private) { Join-Path $baseUtDir ".private_tests" } else { $baseUtDir }
 $reportsDir = Join-Path $targetUtDir "reports"
-New-Item -ItemType Directory -Force -Path $reportsDir | Out-Null
+[System.IO.Directory]::CreateDirectory($reportsDir) | Out-Null
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 
 $results = @()
@@ -86,12 +86,12 @@ if ($Suite -in @("backend", "full")) {
     $cargoToml = Join-Path $repoRoot "backend\Cargo.toml"
     if (Test-Path -LiteralPath $cargoToml) {
         Invoke-QualityStep "Rust Format Check (cargo fmt --check)" {
-            Push-Location (Join-Path $repoRoot "backend")
+            Push-Location -LiteralPath (Join-Path $repoRoot "backend")
             cargo fmt --all -- --check
             Pop-Location
         }
         Invoke-QualityStep "Rust Lint Check (cargo clippy -- -D warnings)" {
-            Push-Location (Join-Path $repoRoot "backend")
+            Push-Location -LiteralPath (Join-Path $repoRoot "backend")
             cargo clippy --all-targets -- -D warnings
             Pop-Location
         }
@@ -99,12 +99,12 @@ if ($Suite -in @("backend", "full")) {
             $privateTargetFile = Join-Path $repoRoot "backend\tests\private_suite.rs"
             $privateVaultFile = Join-Path $repoRoot "unit_test\.private_tests\backend\private_suite.rs"
             if ((-not (Test-Path -LiteralPath $privateTargetFile)) -and (Test-Path -LiteralPath $privateVaultFile)) {
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $privateTargetFile) | Out-Null
+                [System.IO.Directory]::CreateDirectory((Split-Path -Parent $privateTargetFile)) | Out-Null
                 Copy-Item -LiteralPath $privateVaultFile -Destination $privateTargetFile -Force
             }
             if (Test-Path -LiteralPath $privateTargetFile) {
                 Invoke-TestRunnerStep -Name "Rust Isolated Private Integration Target (--test private_suite)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
-                    Push-Location (Join-Path $repoRoot "backend")
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
                     $env:PENELOPE_PRIVATE_TESTS = "1"
                     cargo test --test private_suite -- --nocapture
                     Pop-Location
@@ -114,7 +114,7 @@ if ($Suite -in @("backend", "full")) {
             }
         } else {
             Invoke-TestRunnerStep -Name "Rust Public Unit & DB Integration Tests (--lib --bins --test db_integrity_and_concurrency)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
-                Push-Location (Join-Path $repoRoot "backend")
+                Push-Location -LiteralPath (Join-Path $repoRoot "backend")
                 cargo test --lib --bins --test db_integrity_and_concurrency -- --nocapture
                 Pop-Location
             }
@@ -129,13 +129,13 @@ if ($Suite -in @("frontend", "full")) {
     if (Test-Path -LiteralPath $pkgJson) {
         if ($Private) {
             Invoke-TestRunnerStep -Name "Frontend Isolated Private Tests (vitest private.config)" -CountPattern 'Tests\s+(\d+)\s+passed' -Action {
-                Push-Location (Join-Path $repoRoot "frontend")
+                Push-Location -LiteralPath (Join-Path $repoRoot "frontend")
                 npm.cmd run test:private
                 Pop-Location
             }
         } else {
             Invoke-TestRunnerStep -Name "Frontend Public Unit Tests (vitest public)" -CountPattern 'Tests\s+(\d+)\s+passed' -Action {
-                Push-Location (Join-Path $repoRoot "frontend")
+                Push-Location -LiteralPath (Join-Path $repoRoot "frontend")
                 npm.cmd test
                 Pop-Location
             }

@@ -1,0 +1,37 @@
+[package]
+name = "penelope-backend"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "penelope_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "penelope-backend"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm = "=0.10.3"
+argon2 = "=0.5.3"
+axum = { version = "=0.7.9", features = ["macros"] }
+chrono = { version = "=0.4.39", features = ["serde"] }
+dotenvy = "=0.15.7"
+hex = "=0.4.3"
+rand = "=0.8.5"
+rust_decimal = { version = "=1.36.0", features = ["serde", "serde-with-str", "db-postgres"] }
+secrecy = "=0.8.0"
+serde = { version = "=1.0.217", features = ["derive"] }
+serde_json = "=1.0.138"
+sha2 = "=0.10.8"
+sqlx = { version = "=0.8.3", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "rust_decimal", "json", "macros", "migrate"] }
+thiserror = "=2.0.11"
+tokio = { version = "=1.43.0", features = ["full"] }
+tower = { version = "=0.5.2", features = ["util"] }
+tower-http = { version = "=0.6.2", features = ["cors", "trace", "set-header", "limit"] }
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "fmt"] }
+uuid = { version = "=1.12.1", features = ["v4", "serde"] }
+zeroize = { version = "=1.8.1", features = ["derive"] }
