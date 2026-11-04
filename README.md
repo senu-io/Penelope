@@ -13,7 +13,7 @@
 ---
 
 > [!NOTE]
-> **Implementation Status:** Penelope is currently in **Module 1 (Step 1 Complete: Infrastructure & Crate Initialization)**. The PostgreSQL 16 Docker Compose stack (`postgres` bootstrap superuser, non-superuser `penelope_owner` migration role, and least-privilege `penelope_app` runtime role) and the `penelope-backend` Rust crate (`backend/Cargo.toml` and `backend/Cargo.lock`) have been initialized, while database SQL migrations (`backend/migrations/`), the application HTTP server and business logic (`backend/src/`), and the React web client (`frontend/src/`) remain unimplemented and are tracked module-by-module in [TODO.md](TODO.md).
+> **Project Status:** Penelope is currently in active development. Progress is tracked in [TODO.md](TODO.md).
 
 Penelope is a self-hosted warehouse inventory management system designed around a Rust (`Axum` + `SQLx`) backend, a PostgreSQL 16 relational ledger, and a React 18 web interface.
 
