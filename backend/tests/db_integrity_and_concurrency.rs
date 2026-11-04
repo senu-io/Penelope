@@ -272,11 +272,11 @@ async fn role_separation_and_privilege_boundaries_hold() {
 
     sqlx::query(
         r#"
-        INSERT INTO public.api_keys (id, name, key_prefix, key_hash, scopes, created_by)
+        INSERT INTO public.api_keys (id, name, key_prefix, key_hash, role_scope, created_by)
         VALUES
-            ($1, 'Scanner Write Key', 'pen_live_0001', $4, ARRAY['read:stock', 'write:stock'], $7),
-            ($2, 'Dashboard Read Key', 'pen_live_0002', $5, ARRAY['read:stock'], $7),
-            ($3, 'Revoked Write Key', 'pen_live_0003', $6, ARRAY['write:stock'], $7)
+            ($1, 'Scanner Write Key', 'pen_live_0001', $4, 'operator', $7),
+            ($2, 'Dashboard Read Key', 'pen_live_0002', $5, 'readonly', $7),
+            ($3, 'Revoked Write Key', 'pen_live_0003', $6, 'manager', $7)
         "#,
     )
     .bind(write_key_id)

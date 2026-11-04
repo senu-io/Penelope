@@ -455,12 +455,12 @@ BEGIN
         WHERE k.id = p_actor_api_key_id
           AND k.revoked_at IS NULL
           AND (k.expires_at IS NULL OR k.expires_at > pg_catalog.now())
-          AND 'write:stock' = ANY(k.scopes)
+          AND k.role_scope IN ('manager', 'operator')
           AND u.is_active = TRUE;
         IF NOT FOUND THEN
             RAISE EXCEPTION 'UNAUTHORIZED_OR_INACTIVE_API_KEY'
                 USING ERRCODE = 'P0403',
-                      DETAIL = 'API key is missing, revoked, expired, owned by an inactive user, or lacks write:stock scope.';
+                      DETAIL = 'API key is missing, revoked, expired, owned by an inactive user, or has readonly role_scope.';
         END IF;
     END IF;
 

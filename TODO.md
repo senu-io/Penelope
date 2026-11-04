@@ -63,3 +63,5 @@ This document tracks the modular implementation progress and version control his
 | `97701fb` | 2026-11-01 | `fix: harden test runner boundaries and align MWA/security specs in docs` |
 | `87a0f1f` | 2026-11-03 | `feat(backend): initialize Rust crate, PostgreSQL 16 compose stack, and dual-role init script` |
 | `847b3c4` | 2026-11-04 | `fix(infra): make penelope_owner non-superuser, replace zero-key placeholder, and ignore test reports` |
+| `bead170` | 2026-11-04 | `feat(db): add initial PostgreSQL 16 schema, SECURITY DEFINER ledger functions, and concurrency tests` |
+| `b3109dd` | 2026-11-04 | `Updated README.md` |
