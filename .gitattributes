@@ -1,2 +1,3 @@
-# keep unix line endings on shell scripts mounted into alpine containers
+# keep unix line endings on shell scripts and sqlx migrations (so sqlx sha-384 checksums stay stable across os checkouts)
 *.sh text eol=lf
+*.sql text eol=lf

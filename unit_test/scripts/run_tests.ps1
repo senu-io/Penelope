@@ -97,19 +97,27 @@ if ($Suite -in @("backend", "full")) {
         if ($Private) {
             $privateTargetFile = Join-Path $repoRoot "backend\tests\private_suite.rs"
             $privateVaultFile = Join-Path $repoRoot "unit_test\.private_tests\backend\private_suite.rs"
-            if ((-not (Test-Path -LiteralPath $privateTargetFile)) -and (Test-Path -LiteralPath $privateVaultFile)) {
-                [System.IO.Directory]::CreateDirectory((Split-Path -Parent $privateTargetFile)) | Out-Null
-                Copy-Item -LiteralPath $privateVaultFile -Destination $privateTargetFile -Force
-            }
-            if (Test-Path -LiteralPath $privateTargetFile) {
-                Invoke-TestRunnerStep -Name "Rust Isolated Private Integration Target (--test private_suite)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
-                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
-                    $env:PENELOPE_PRIVATE_TESTS = "1"
-                    cargo test --test private_suite -- --nocapture
-                    Pop-Location
+            $copiedPrivateTarget = $false
+            try {
+                if ((-not (Test-Path -LiteralPath $privateTargetFile)) -and (Test-Path -LiteralPath $privateVaultFile)) {
+                    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $privateTargetFile)) | Out-Null
+                    Copy-Item -LiteralPath $privateVaultFile -Destination $privateTargetFile
+                    $copiedPrivateTarget = $true
                 }
-            } else {
-                Add-StepResult -Name "Rust Isolated Private Integration Target (--test private_suite)" -Status "FAIL" -ExitCode 1 -DurationMs 0 -TestsExecuted 0 -Output "PRIVATE_TARGET_NOT_FOUND: Missing $privateTargetFile."
+                if (Test-Path -LiteralPath $privateTargetFile) {
+                    Invoke-TestRunnerStep -Name "Rust Isolated Private Integration Target (--test private_suite)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                        Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                        $env:PENELOPE_PRIVATE_TESTS = "1"
+                        cargo test --test private_suite -- --nocapture
+                        Pop-Location
+                    }
+                } else {
+                    Add-StepResult -Name "Rust Isolated Private Integration Target (--test private_suite)" -Status "FAIL" -ExitCode 1 -DurationMs 0 -TestsExecuted 0 -Output "PRIVATE_TARGET_NOT_FOUND: Missing $privateTargetFile."
+                }
+            } finally {
+                if ($copiedPrivateTarget -and (Test-Path -LiteralPath $privateTargetFile)) {
+                    Remove-Item -LiteralPath $privateTargetFile -Force -ErrorAction SilentlyContinue
+                }
             }
         } else {
             Invoke-TestRunnerStep -Name "Rust Public Unit & DB Integration Tests (--lib --bins --test db_integrity_and_concurrency)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
