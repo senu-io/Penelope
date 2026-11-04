@@ -7,8 +7,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 
-# Resolve [Penelope] repository root reliably regardless of whether this script
-# lives in unit_test/scripts/ or unit_test/.private_tests/scripts/
+# resolve [Penelope] repo root whether invoked from unit_test/scripts/ or .private_tests/scripts/
 if (-not [string]::IsNullOrWhiteSpace($RepoRootOverride)) {
     $repoRoot = [System.IO.Path]::GetFullPath($RepoRootOverride)
 } else {
@@ -66,7 +65,7 @@ function Invoke-TestRunnerStep {
     $exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
     $sw.Stop()
 
-    # Strip ANSI escape sequences before counting executed tests; 0 executed tests is an automatic FAIL
+    # strip ansi escape codes before counting passed tests; fail if 0 tests ran
     $cleanOutput = [regex]::Replace($output, '\x1B\[[0-9;]*[a-zA-Z]', '')
     $totalExecuted = 0
     $regexMatches = [regex]::Matches($cleanOutput, $CountPattern)

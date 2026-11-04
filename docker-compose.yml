@@ -5,8 +5,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-penelope_db}
-      POSTGRES_USER: ${POSTGRES_USER:-penelope_owner}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_OWNER_USER: ${POSTGRES_OWNER_USER:-penelope_owner}
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?POSTGRES_OWNER_PASSWORD must be set in .env}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-penelope_app}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set in .env}
     ports:
@@ -15,7 +17,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/docker/init-db.sh:/docker-entrypoint-initdb.d/01-init-db.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-penelope_owner} -d $${POSTGRES_DB:-penelope_db}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_OWNER_USER:-penelope_owner} -d $${POSTGRES_DB:-penelope_db}"]
       interval: 5s
       timeout: 5s
       retries: 10

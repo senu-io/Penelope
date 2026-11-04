@@ -13,7 +13,7 @@
 ---
 
 > [!NOTE]
-> **Implementation Status:** Penelope is currently in **Phase 0 / Module 1 Specification & Foundation Setup**. The repository directory structure, licensed font/icon assets, environment configuration templates, and public/private test-runner infrastructure are in place. Database SQL migrations (`backend/migrations/`), the Rust backend (`backend/src/`), and the React web client (`frontend/src/`) are not yet implemented and are tracked module-by-module in [TODO.md](TODO.md).
+> **Implementation Status:** Penelope is currently in **Module 1 (Step 1 Complete: Infrastructure & Crate Initialization)**. The PostgreSQL 16 Docker Compose stack (`postgres` bootstrap superuser, non-superuser `penelope_owner` migration role, and least-privilege `penelope_app` runtime role) and the `penelope-backend` Rust crate (`backend/Cargo.toml` and `backend/Cargo.lock`) have been initialized, while database SQL migrations (`backend/migrations/`), the application HTTP server and business logic (`backend/src/`), and the React web client (`frontend/src/`) remain unimplemented and are tracked module-by-module in [TODO.md](TODO.md).
 
 Penelope is a self-hosted warehouse inventory management system designed around a Rust (`Axum` + `SQLx`) backend, a PostgreSQL 16 relational ledger, and a React 18 web interface.
 
@@ -24,7 +24,7 @@ Penelope is a self-hosted warehouse inventory management system designed around 
 - **Operational Overview:** Monitor total inventory valuation, low-stock items below their reorder threshold, and recent stock movements from a single screen.
 - **Data Exchange (`data_io`):** Import and export catalog records, ledger history, and audit trails in RFC 4180 CSV and JSON formats.
 - **Barcode and Label Workflow:** Fast keyboard-wedge barcode lookup paired with printable Code-128 and QR bin labels.
-- **Security and Access Control:** Argon2id password hashing, HttpOnly session cookies with CSRF protection, role-based access control (`Admin`, `Manager`, `Operator`), 256-bit SHA-256 scoped API keys, least-privilege database role separation (`penelope_owner` vs `penelope_app`), and versioned AES-256-GCM field encryption with contextual AAD for confidential product notes.
+- **Security and Access Control:** Argon2id password hashing, HttpOnly session cookies with CSRF protection, role-based access control (`Admin`, `Manager`, `Operator`), 256-bit SHA-256 scoped API keys, three-tier PostgreSQL role separation (`postgres` bootstrap superuser, non-superuser `penelope_owner` schema owner, and least-privilege `penelope_app` runtime role), and versioned AES-256-GCM field encryption with contextual AAD for confidential product notes.
 
 ## Technology Stack
 
@@ -40,10 +40,11 @@ Penelope is a self-hosted warehouse inventory management system designed around 
 ```text
 .
 ├── assets/                 # Fonts, icons, schematics, and brand logos
-├── backend/                # Rust (Axum + SQLx) HTTP API server and SQL migrations (planned)
+├── backend/                # Rust (Axum + SQLx) crate scaffold and Docker DB init script
 ├── frontend/               # React + Vite + TypeScript web client (planned)
-├── unit_test/              # Public unit test suites, fixtures, and reports
+├── unit_test/              # Public unit test scripts, fixtures, and local reports
 ├── .sample_env.env         # Environment configuration template
+├── docker-compose.yml      # PostgreSQL 16 container stack
 ├── TODO.md                 # Modular development checklist and commit log
 ├── THIRD_PARTY_NOTICES.md  # Licenses and attributions for bundled assets
 └── LICENSE                 # Apache License 2.0
@@ -58,9 +59,10 @@ cp .sample_env.env .env
 ```
 
 Configure the following in `.env`:
-- `MIGRATION_DATABASE_URL`: Privileged schema owner connection (`penelope_owner`) used exclusively for running database migrations.
-- `DATABASE_URL`: Least-privilege runtime connection (`penelope_app`) used by the Axum server.
-- `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned 256-bit (64-character hex) keyring for `AES-256-GCM` field encryption.
+- `POSTGRES_USER` and `POSTGRES_PASSWORD`: Bootstrap superuser (`postgres`) used by the PostgreSQL container entrypoint on first volume initialization (`backend/docker/init-db.sh`). Note that `/docker-entrypoint-initdb.d/` scripts run only when the `penelope_postgres_data` volume is initially empty; run `docker compose down -v && docker compose up -d` if re-initializing roles.
+- `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, and `MIGRATION_DATABASE_URL`: Non-superuser schema owner connection (`penelope_owner`) used exclusively for running database migrations.
+- `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD`, and `DATABASE_URL`: Least-privilege runtime connection (`penelope_app`) used by the Axum server.
+- `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned 256-bit (64-character hex) keyring for `AES-256-GCM` field encryption. Generate a real key via `openssl rand -hex 32` (missing, malformed, or all-zero keys are rejected at startup).
 
 Never commit `.env` files to version control.
 

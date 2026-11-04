@@ -1,2 +1,2 @@
-# Guarantee LF line endings for shell scripts mounted into Linux containers
+# keep unix line endings on shell scripts mounted into alpine containers
 *.sh text eol=lf

@@ -1,8 +1,4 @@
-# ============================================================================
-# PENELOPE - GITIGNORE (SECURITY, PRIVATE TESTS & BUILD BOUNDARIES)
-# ============================================================================
-
-# 1. Environment Variables & Secrets (NEVER COMMIT)
+# env vars and local secrets
 .env
 .env.*
 *.env
@@ -14,8 +10,9 @@
 *.p12
 secrets/
 
-# 2. Private Unit Tests & Internal Design Verification Scripts (LOCAL ONLY)
+# private tests, local test reports, and oxfords checker
 unit_test/.private_tests/
+unit_test/reports/
 backend/tests/private_suite.rs
 frontend/**/*.private.test.ts
 frontend/**/*.private.test.tsx
@@ -23,12 +20,12 @@ scripts/check-oxfords.mjs
 scripts/OXFORDS_LICENSE.txt
 scripts/OXFORDS_CREDITS.md
 
-# 3. Rust / Cargo Build Artifacts (Note: backend/Cargo.lock IS tracked for binary build reproducibility)
+# rust build artifacts (backend/Cargo.lock stays tracked for binary builds)
 backend/target/
 target/
 **/*.rs.bk
 
-# 4. Node / Frontend Build Artifacts
+# frontend / node
 frontend/node_modules/
 node_modules/
 frontend/dist/
@@ -39,7 +36,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# 5. Database & Local Runtime Volumes
+# local db volumes and dumps
 postgres_data/
 *.db
 *.sqlite
@@ -47,7 +44,7 @@ postgres_data/
 *.sql.gz
 *.dump
 
-# 6. OS & Editor Metadata
+# os / editor files
 .DS_Store
 Thumbs.db
 desktop.ini
