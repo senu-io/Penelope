@@ -1,6 +1,7 @@
 param(
     [ValidateSet("backend", "frontend", "full")]
     [string]$Suite = "full",
+    [string]$Target = "",
     [switch]$Private,
     [string]$RepoRootOverride = ""
 )
@@ -141,10 +142,33 @@ if ($Suite -in @("backend", "full")) {
                 }
             }
         } else {
-            Invoke-TestRunnerStep -Name "Rust Public Unit & DB Integration Tests (--lib --bins --test db_integrity_and_concurrency)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
-                Push-Location -LiteralPath (Join-Path $repoRoot "backend")
-                cargo test --lib --bins --test db_integrity_and_concurrency -- --nocapture
-                Pop-Location
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -eq "unit") {
+                Invoke-TestRunnerStep -Name "Rust Unit Tests (--lib)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --lib -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("role_boundaries", "roles", "db")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: Role & Boundary Isolation (--test db_role_boundaries)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test db_role_boundaries -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("concurrency", "idempotency", "db")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: Concurrency & Idempotency (--test db_concurrency_and_idempotency)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test db_concurrency_and_idempotency -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("mwa", "ledger", "append_only", "db")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: MWA Costing & Append-Only Triggers (--test db_mwa_and_append_only)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test db_mwa_and_append_only -- --nocapture
+                    Pop-Location
+                }
             }
         }
     } else {
