@@ -60,7 +60,7 @@ cp .sample_env.env .env
 
 Configure the following in `.env`:
 - `POSTGRES_USER` and `POSTGRES_PASSWORD`: Bootstrap superuser (`postgres`) used by the PostgreSQL container entrypoint on first volume initialization (`backend/docker/init-db.sh`). Note that `/docker-entrypoint-initdb.d/` scripts run only when the `penelope_postgres_data` volume is initially empty; run `docker compose down -v && docker compose up -d` if re-initializing roles.
-- `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, and `MIGRATION_DATABASE_URL`: Non-superuser schema owner connection (`penelope_owner`) used exclusively for running database migrations.
+- `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, and `MIGRATION_DATABASE_URL`: Non-superuser schema owner connection (`penelope_owner`) used only for running database migrations.
 - `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD`, and `DATABASE_URL`: Least-privilege runtime connection (`penelope_app`) used by the Axum server.
 - `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned 256-bit (64-character hex) keyring for `AES-256-GCM` field encryption. Generate a real key via `openssl rand -hex 32` (missing, malformed, or all-zero keys are rejected at startup).
 

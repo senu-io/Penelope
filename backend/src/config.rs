@@ -416,11 +416,11 @@ mod tests {
         // test environment matching .sample_env.env names
         std::env::set_var(
             "DATABASE_URL",
-            "postgres://penelope_app:pass@localhost:5432/penelope_db",
+            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db",
         );
         std::env::set_var(
             "MIGRATION_DATABASE_URL",
-            "postgres://penelope_owner:pass@localhost:5432/penelope_db",
+            "postgres://penelope_owner:penelope_owner_password@localhost:5432/penelope_db",
         );
         std::env::set_var("BACKEND_HOST", "0.0.0.0");
         std::env::set_var("BACKEND_PORT", "9090");
@@ -452,7 +452,7 @@ mod tests {
     fn rejects_short_session_secret() {
         std::env::set_var(
             "DATABASE_URL",
-            "postgres://penelope_app:pass@localhost:5432/penelope_db",
+            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db",
         );
         std::env::set_var("SESSION_SECRET", "too_short");
         std::env::set_var("PENELOPE_ACTIVE_KEY_ID", "1");

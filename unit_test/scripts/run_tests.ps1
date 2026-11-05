@@ -119,6 +119,27 @@ if ($Suite -in @("backend", "full")) {
                     Remove-Item -LiteralPath $privateTargetFile -Force -ErrorAction SilentlyContinue
                 }
             }
+
+            # run private ai and security verification checks
+            $privateScriptsDir = Join-Path $repoRoot "unit_test\.private_tests\scripts"
+            $aiMdScript = Join-Path $privateScriptsDir "check_ai_markdown.mjs"
+            if (Test-Path -LiteralPath $aiMdScript) {
+                Invoke-QualityStep "Private AI Markdown Check (check_ai_markdown.mjs)" {
+                    node $aiMdScript
+                }
+            }
+            $aiCommentsScript = Join-Path $privateScriptsDir "check_ai_comments.mjs"
+            if (Test-Path -LiteralPath $aiCommentsScript) {
+                Invoke-QualityStep "Private AI Comments Check (check_ai_comments.mjs)" {
+                    node $aiCommentsScript
+                }
+            }
+            $repoSecScript = Join-Path $privateScriptsDir "check_repo_security.mjs"
+            if (Test-Path -LiteralPath $repoSecScript) {
+                Invoke-QualityStep "Private Repo Security & Boundary Audit (check_repo_security.mjs)" {
+                    node $repoSecScript
+                }
+            }
         } else {
             Invoke-TestRunnerStep -Name "Rust Public Unit & DB Integration Tests (--lib --bins --test db_integrity_and_concurrency)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
                 Push-Location -LiteralPath (Join-Path $repoRoot "backend")

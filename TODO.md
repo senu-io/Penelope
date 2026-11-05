@@ -68,3 +68,4 @@ This document tracks the modular implementation progress and version control his
 | `4f15928` | 2026-11-04 | `fix(db): align api_keys check in record_stock_movement with role_scope column` |
 | `67f739e` | 2026-11-04 | `feat(backend): implement AppConfig, multi-key KeyRing, and AppError envelope` |
 | `ab58a29` | 2026-11-05 | `docs: Updated Test_Info.md` |
+| `1387e2d` | 2026-11-05 | `fix(config): align AppConfig parser with .sample_env.env and add SESSION_SECRET` |

@@ -441,7 +441,7 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         dec("2.000000")
     );
 
-    // 3. MWA 6-decimal precision & authoritative total_cost_basis_eur:
+    // mwa 6-decimal precision and exact total_cost_basis_eur:
     // receive 3 ea @ 0.100000 EUR -> total_cost_basis = 0.300000, unit_cost = 0.100000
     // receive 1 ea @ 0.110000 EUR -> total_cost_basis = 0.410000, unit_cost = 0.102500
     sqlx::query(
