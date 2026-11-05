@@ -137,6 +137,7 @@ impl KeyRing {
 pub struct InitialAdminConfig {
     pub email: String,
     pub password: SecretString,
+    pub full_name: String,
 }
 
 #[derive(Clone)]
@@ -150,6 +151,12 @@ pub struct AppConfig {
     pub cors_allowed_origins: Vec<String>,
     pub keyring: KeyRing,
     pub initial_admin: Option<InitialAdminConfig>,
+    pub default_currency_code: String,
+    pub seed_demo_data: bool,
+    pub session_idle_ttl_hours: u32,
+    pub session_absolute_ttl_hours: u32,
+    pub rate_limit_auth_per_min: u32,
+    pub rate_limit_api_per_min: u32,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -164,6 +171,15 @@ impl std::fmt::Debug for AppConfig {
             .field("cors_allowed_origins", &self.cors_allowed_origins)
             .field("keyring", &self.keyring)
             .field("initial_admin_present", &self.initial_admin.is_some())
+            .field("default_currency_code", &self.default_currency_code)
+            .field("seed_demo_data", &self.seed_demo_data)
+            .field("session_idle_ttl_hours", &self.session_idle_ttl_hours)
+            .field(
+                "session_absolute_ttl_hours",
+                &self.session_absolute_ttl_hours,
+            )
+            .field("rate_limit_auth_per_min", &self.rate_limit_auth_per_min)
+            .field("rate_limit_api_per_min", &self.rate_limit_api_per_min)
             .finish()
     }
 }
@@ -178,15 +194,21 @@ impl AppConfig {
         let migration_database_url =
             std::env::var("MIGRATION_DATABASE_URL").unwrap_or_else(|_| database_url.clone());
 
-        let run_migrations = std::env::var("PENELOPE_RUN_MIGRATIONS")
+        // supports both RUN_MIGRATIONS_ON_STARTUP from .sample_env.env and PENELOPE_RUN_MIGRATIONS
+        let run_migrations = std::env::var("RUN_MIGRATIONS_ON_STARTUP")
+            .or_else(|_| std::env::var("PENELOPE_RUN_MIGRATIONS"))
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
 
-        let server_host = std::env::var("PENELOPE_HOST")
+        // supports BACKEND_HOST from .sample_env.env, PENELOPE_HOST, and SERVER_HOST
+        let server_host = std::env::var("BACKEND_HOST")
+            .or_else(|_| std::env::var("PENELOPE_HOST"))
             .or_else(|_| std::env::var("SERVER_HOST"))
             .unwrap_or_else(|_| "127.0.0.1".to_string());
 
-        let server_port = std::env::var("PENELOPE_PORT")
+        // supports BACKEND_PORT from .sample_env.env, PENELOPE_PORT, and PORT
+        let server_port = std::env::var("BACKEND_PORT")
+            .or_else(|_| std::env::var("PENELOPE_PORT"))
             .or_else(|_| std::env::var("PORT"))
             .unwrap_or_else(|_| "8080".to_string())
             .parse::<u16>()
@@ -202,7 +224,9 @@ impl AppConfig {
         }
         let session_secret = SecretString::new(session_secret_raw);
 
-        let cors_raw = std::env::var("CORS_ALLOWED_ORIGINS")
+        // supports FRONTEND_ORIGIN from .sample_env.env and CORS_ALLOWED_ORIGINS
+        let cors_raw = std::env::var("FRONTEND_ORIGIN")
+            .or_else(|_| std::env::var("CORS_ALLOWED_ORIGINS"))
             .unwrap_or_else(|_| "http://localhost:5173,http://127.0.0.1:5173".to_string());
         let cors_allowed_origins = cors_raw
             .split(',')
@@ -220,18 +244,71 @@ impl AppConfig {
 
         let keyring = KeyRing::from_env_str(active_key_id, &raw_keys)?;
 
-        let initial_admin = match (
-            std::env::var("PENELOPE_INITIAL_ADMIN_EMAIL"),
-            std::env::var("PENELOPE_INITIAL_ADMIN_PASSWORD"),
-        ) {
-            (Ok(email), Ok(pw)) if !email.trim().is_empty() && !pw.trim().is_empty() => {
-                Some(InitialAdminConfig {
-                    email: email.trim().to_string(),
-                    password: SecretString::new(pw),
-                })
+        // check first-run admin bootstrap toggle and variables
+        let bootstrap_enabled = std::env::var("BOOTSTRAP_INITIAL_ADMIN")
+            .or_else(|_| std::env::var("PENELOPE_BOOTSTRAP_INITIAL_ADMIN"))
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
+
+        let initial_admin = if bootstrap_enabled {
+            let email = std::env::var("INITIAL_ADMIN_EMAIL")
+                .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_EMAIL"))
+                .map_err(|_| ConfigError::MissingVar("INITIAL_ADMIN_EMAIL".to_string()))?;
+
+            let pw = std::env::var("INITIAL_ADMIN_PASSWORD")
+                .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_PASSWORD"))
+                .map_err(|_| ConfigError::MissingVar("INITIAL_ADMIN_PASSWORD".to_string()))?;
+
+            let full_name = std::env::var("INITIAL_ADMIN_NAME")
+                .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_NAME"))
+                .unwrap_or_else(|_| "System Administrator".to_string());
+
+            if email.trim().is_empty() {
+                return Err(ConfigError::MissingVar(
+                    "INITIAL_ADMIN_EMAIL cannot be blank".to_string(),
+                ));
             }
-            _ => None,
+            if pw.trim().is_empty() {
+                return Err(ConfigError::MissingVar(
+                    "INITIAL_ADMIN_PASSWORD cannot be blank".to_string(),
+                ));
+            }
+
+            Some(InitialAdminConfig {
+                email: email.trim().to_string(),
+                password: SecretString::new(pw),
+                full_name: full_name.trim().to_string(),
+            })
+        } else {
+            None
         };
+
+        let default_currency_code =
+            std::env::var("DEFAULT_CURRENCY_CODE").unwrap_or_else(|_| "EUR".to_string());
+
+        let seed_demo_data = std::env::var("SEED_DEMO_DATA")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
+
+        let session_idle_ttl_hours = std::env::var("SESSION_IDLE_TTL_HOURS")
+            .unwrap_or_else(|_| "24".to_string())
+            .parse::<u32>()
+            .map_err(|e| ConfigError::InvalidInt("SESSION_IDLE_TTL_HOURS".to_string(), e))?;
+
+        let session_absolute_ttl_hours = std::env::var("SESSION_ABSOLUTE_TTL_HOURS")
+            .unwrap_or_else(|_| "168".to_string())
+            .parse::<u32>()
+            .map_err(|e| ConfigError::InvalidInt("SESSION_ABSOLUTE_TTL_HOURS".to_string(), e))?;
+
+        let rate_limit_auth_per_min = std::env::var("RATE_LIMIT_AUTH_PER_MIN")
+            .unwrap_or_else(|_| "10".to_string())
+            .parse::<u32>()
+            .map_err(|e| ConfigError::InvalidInt("RATE_LIMIT_AUTH_PER_MIN".to_string(), e))?;
+
+        let rate_limit_api_per_min = std::env::var("RATE_LIMIT_API_PER_MIN")
+            .unwrap_or_else(|_| "120".to_string())
+            .parse::<u32>()
+            .map_err(|e| ConfigError::InvalidInt("RATE_LIMIT_API_PER_MIN".to_string(), e))?;
 
         Ok(Self {
             database_url,
@@ -243,6 +320,12 @@ impl AppConfig {
             cors_allowed_origins,
             keyring,
             initial_admin,
+            default_currency_code,
+            seed_demo_data,
+            session_idle_ttl_hours,
+            session_absolute_ttl_hours,
+            rate_limit_auth_per_min,
+            rate_limit_api_per_min,
         })
     }
 }
@@ -326,5 +409,59 @@ mod tests {
             err,
             ConfigError::InvalidKeyLength(..) | ConfigError::InvalidHex(..)
         ));
+    }
+
+    #[test]
+    fn app_config_parses_sample_env_variables() {
+        // test environment matching .sample_env.env names
+        std::env::set_var(
+            "DATABASE_URL",
+            "postgres://penelope_app:pass@localhost:5432/penelope_db",
+        );
+        std::env::set_var(
+            "MIGRATION_DATABASE_URL",
+            "postgres://penelope_owner:pass@localhost:5432/penelope_db",
+        );
+        std::env::set_var("BACKEND_HOST", "0.0.0.0");
+        std::env::set_var("BACKEND_PORT", "9090");
+        std::env::set_var("FRONTEND_ORIGIN", "http://localhost:3000");
+        std::env::set_var("RUN_MIGRATIONS_ON_STARTUP", "true");
+        std::env::set_var(
+            "SESSION_SECRET",
+            "super_secret_session_key_longer_than_32_bytes_ok",
+        );
+        std::env::set_var("PENELOPE_ACTIVE_KEY_ID", "1");
+        std::env::set_var("PENELOPE_ENCRYPTION_KEYS", format!("1:{VALID_KEY_1}"));
+        std::env::set_var("BOOTSTRAP_INITIAL_ADMIN", "true");
+        std::env::set_var("INITIAL_ADMIN_EMAIL", "boss@penelope.local");
+        std::env::set_var("INITIAL_ADMIN_PASSWORD", "strong_admin_pass_123");
+        std::env::set_var("INITIAL_ADMIN_NAME", "Lead Admin");
+
+        let config = AppConfig::from_env().expect("valid app config");
+        assert_eq!(config.server_host, "0.0.0.0");
+        assert_eq!(config.server_port, 9090);
+        assert_eq!(config.cors_allowed_origins, vec!["http://localhost:3000"]);
+        assert!(config.run_migrations);
+        assert!(config.initial_admin.is_some());
+        let admin = config.initial_admin.unwrap();
+        assert_eq!(admin.email, "boss@penelope.local");
+        assert_eq!(admin.full_name, "Lead Admin");
+    }
+
+    #[test]
+    fn rejects_short_session_secret() {
+        std::env::set_var(
+            "DATABASE_URL",
+            "postgres://penelope_app:pass@localhost:5432/penelope_db",
+        );
+        std::env::set_var("SESSION_SECRET", "too_short");
+        std::env::set_var("PENELOPE_ACTIVE_KEY_ID", "1");
+        std::env::set_var("PENELOPE_ENCRYPTION_KEYS", format!("1:{VALID_KEY_1}"));
+
+        let err = AppConfig::from_env().unwrap_err();
+        match err {
+            ConfigError::SessionSecretTooShort(len) => assert_eq!(len, 9),
+            other => panic!("expected SessionSecretTooShort, got {other:?}"),
+        }
     }
 }

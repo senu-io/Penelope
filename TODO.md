@@ -65,3 +65,6 @@ This document tracks the modular implementation progress and version control his
 | `847b3c4` | 2026-11-04 | `fix(infra): make penelope_owner non-superuser, replace zero-key placeholder, and ignore test reports` |
 | `bead170` | 2026-11-04 | `feat(db): add initial PostgreSQL 16 schema, SECURITY DEFINER ledger functions, and concurrency tests` |
 | `b3109dd` | 2026-11-04 | `Updated README.md` |
+| `4f15928` | 2026-11-04 | `fix(db): align api_keys check in record_stock_movement with role_scope column` |
+| `67f739e` | 2026-11-04 | `feat(backend): implement AppConfig, multi-key KeyRing, and AppError envelope` |
+| `ab58a29` | 2026-11-05 | `docs: Updated Test_Info.md` |
