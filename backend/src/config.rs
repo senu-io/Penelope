@@ -35,8 +35,97 @@ pub enum ConfigError {
     #[error("key id {0} is all zeroes, which is not permitted")]
     ZeroKeyForbidden(u16),
 
-    #[error("session secret is too short: must be at least 32 characters, got {0}")]
+    #[error("placeholder value is not permitted for {0}")]
+    PlaceholderForbidden(String),
+
+    #[error("session secret invalid length: expected 64 hex characters (32 bytes), got {0}")]
     SessionSecretTooShort(usize),
+
+    #[error("session secret must be valid hexadecimal: {0}")]
+    InvalidSessionSecretHex(hex::FromHexError),
+
+    #[error("session secret cannot be all zeroes")]
+    ZeroSessionSecretForbidden,
+
+    #[error("initial admin password is too short: must be at least 12 characters, got {0}")]
+    AdminPasswordTooShort(usize),
+}
+
+fn is_placeholder_value(val: &str) -> bool {
+    let lower = val.trim().to_ascii_lowercase();
+    lower.contains("change_me")
+        || lower.contains("changeme")
+        || lower.contains("placeholder")
+        || lower.contains("your_secret")
+        || lower.contains("your_password")
+        || lower.contains("example_")
+}
+
+// validate that session secret is a 64-char hex string (256-bit) and not a placeholder or all zeroes
+pub fn validate_session_secret(raw: &str) -> Result<SecretString, ConfigError> {
+    let trimmed = raw.trim();
+    if is_placeholder_value(trimmed) {
+        return Err(ConfigError::PlaceholderForbidden(
+            "SESSION_SECRET".to_string(),
+        ));
+    }
+    if trimmed.len() != 64 {
+        return Err(ConfigError::SessionSecretTooShort(trimmed.len()));
+    }
+    let decoded =
+        Zeroizing::new(hex::decode(trimmed).map_err(ConfigError::InvalidSessionSecretHex)?);
+    if decoded.iter().all(|&b| b == 0) {
+        return Err(ConfigError::ZeroSessionSecretForbidden);
+    }
+    Ok(SecretString::new(trimmed.to_string()))
+}
+
+// validate initial admin bootstrap credentials against placeholder values and minimum password length
+pub fn validate_initial_admin(
+    email: &str,
+    pw: &str,
+    full_name: &str,
+) -> Result<InitialAdminConfig, ConfigError> {
+    let email_trimmed = email.trim();
+    let pw_trimmed = pw.trim();
+    let name_trimmed = full_name.trim();
+
+    if email_trimmed.is_empty() {
+        return Err(ConfigError::MissingVar(
+            "INITIAL_ADMIN_EMAIL cannot be blank".to_string(),
+        ));
+    }
+    if is_placeholder_value(email_trimmed) {
+        return Err(ConfigError::PlaceholderForbidden(
+            "INITIAL_ADMIN_EMAIL".to_string(),
+        ));
+    }
+
+    if pw_trimmed.is_empty() {
+        return Err(ConfigError::MissingVar(
+            "INITIAL_ADMIN_PASSWORD cannot be blank".to_string(),
+        ));
+    }
+    if is_placeholder_value(pw_trimmed) {
+        return Err(ConfigError::PlaceholderForbidden(
+            "INITIAL_ADMIN_PASSWORD".to_string(),
+        ));
+    }
+
+    let pw_char_len = pw_trimmed.chars().count();
+    if pw_char_len < 12 {
+        return Err(ConfigError::AdminPasswordTooShort(pw_char_len));
+    }
+
+    Ok(InitialAdminConfig {
+        email: email_trimmed.to_string(),
+        password: SecretString::new(pw_trimmed.to_string()),
+        full_name: if name_trimmed.is_empty() {
+            "System Administrator".to_string()
+        } else {
+            name_trimmed.to_string()
+        },
+    })
 }
 
 #[derive(Clone)]
@@ -140,6 +229,16 @@ pub struct InitialAdminConfig {
     pub full_name: String,
 }
 
+impl std::fmt::Debug for InitialAdminConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InitialAdminConfig")
+            .field("email", &self.email)
+            .field("password", &"<redacted>")
+            .field("full_name", &self.full_name)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct AppConfig {
     pub database_url: String,
@@ -217,12 +316,7 @@ impl AppConfig {
         let session_secret_raw = std::env::var("SESSION_SECRET")
             .map_err(|_| ConfigError::MissingVar("SESSION_SECRET".to_string()))?;
 
-        if session_secret_raw.trim().len() < 32 {
-            return Err(ConfigError::SessionSecretTooShort(
-                session_secret_raw.trim().len(),
-            ));
-        }
-        let session_secret = SecretString::new(session_secret_raw);
+        let session_secret = validate_session_secret(&session_secret_raw)?;
 
         // supports FRONTEND_ORIGIN from .sample_env.env and CORS_ALLOWED_ORIGINS
         let cors_raw = std::env::var("FRONTEND_ORIGIN")
@@ -263,22 +357,7 @@ impl AppConfig {
                 .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_NAME"))
                 .unwrap_or_else(|_| "System Administrator".to_string());
 
-            if email.trim().is_empty() {
-                return Err(ConfigError::MissingVar(
-                    "INITIAL_ADMIN_EMAIL cannot be blank".to_string(),
-                ));
-            }
-            if pw.trim().is_empty() {
-                return Err(ConfigError::MissingVar(
-                    "INITIAL_ADMIN_PASSWORD cannot be blank".to_string(),
-                ));
-            }
-
-            Some(InitialAdminConfig {
-                email: email.trim().to_string(),
-                password: SecretString::new(pw),
-                full_name: full_name.trim().to_string(),
-            })
+            Some(validate_initial_admin(&email, &pw, &full_name)?)
         } else {
             None
         };
@@ -411,9 +490,12 @@ mod tests {
         ));
     }
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn app_config_parses_sample_env_variables() {
-        // test environment matching .sample_env.env names
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // test environment matching .sample_env.env names with valid 64-char hex secret
         std::env::set_var(
             "DATABASE_URL",
             "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db",
@@ -426,10 +508,7 @@ mod tests {
         std::env::set_var("BACKEND_PORT", "9090");
         std::env::set_var("FRONTEND_ORIGIN", "http://localhost:3000");
         std::env::set_var("RUN_MIGRATIONS_ON_STARTUP", "true");
-        std::env::set_var(
-            "SESSION_SECRET",
-            "super_secret_session_key_longer_than_32_bytes_ok",
-        );
+        std::env::set_var("SESSION_SECRET", VALID_KEY_2);
         std::env::set_var("PENELOPE_ACTIVE_KEY_ID", "1");
         std::env::set_var("PENELOPE_ENCRYPTION_KEYS", format!("1:{VALID_KEY_1}"));
         std::env::set_var("BOOTSTRAP_INITIAL_ADMIN", "true");
@@ -450,6 +529,7 @@ mod tests {
 
     #[test]
     fn rejects_short_session_secret() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(
             "DATABASE_URL",
             "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db",
@@ -462,6 +542,49 @@ mod tests {
         match err {
             ConfigError::SessionSecretTooShort(len) => assert_eq!(len, 9),
             other => panic!("expected SessionSecretTooShort, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_placeholder_session_secret() {
+        let sample_placeholder = "CHANGE_ME_GENERATE_64_CHAR_SECRET_WITH_OPENSSL_RAND_HEX_32";
+        let err = validate_session_secret(sample_placeholder).unwrap_err();
+        match err {
+            ConfigError::PlaceholderForbidden(var) => assert_eq!(var, "SESSION_SECRET"),
+            other => panic!("expected PlaceholderForbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_non_hex_or_all_zero_session_secret() {
+        let non_hex_64 = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let err_hex = validate_session_secret(non_hex_64).unwrap_err();
+        assert!(matches!(err_hex, ConfigError::InvalidSessionSecretHex(_)));
+
+        let err_zero = validate_session_secret(ZERO_KEY).unwrap_err();
+        assert!(matches!(err_zero, ConfigError::ZeroSessionSecretForbidden));
+    }
+
+    #[test]
+    fn rejects_placeholder_or_short_initial_admin_password() {
+        let sample_pw = "CHANGE_ME_MIN_12_CHAR_ADMIN_PASS";
+        let err_placeholder =
+            validate_initial_admin("admin@penelope.local", sample_pw, "System Administrator")
+                .unwrap_err();
+        match err_placeholder {
+            ConfigError::PlaceholderForbidden(var) => assert_eq!(var, "INITIAL_ADMIN_PASSWORD"),
+            other => panic!("expected PlaceholderForbidden, got {other:?}"),
+        }
+
+        let err_short = validate_initial_admin(
+            "admin@penelope.local",
+            "short_pw_11",
+            "System Administrator",
+        )
+        .unwrap_err();
+        match err_short {
+            ConfigError::AdminPasswordTooShort(len) => assert_eq!(len, 11),
+            other => panic!("expected AdminPasswordTooShort, got {other:?}"),
         }
     }
 }
