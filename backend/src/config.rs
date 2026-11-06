@@ -286,76 +286,95 @@ impl std::fmt::Debug for AppConfig {
 impl AppConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         dotenvy::dotenv().ok();
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
 
-        let database_url = std::env::var("DATABASE_URL")
-            .map_err(|_| ConfigError::MissingVar("DATABASE_URL".to_string()))?;
+    pub fn from_pairs<I, K, V>(pairs: I) -> Result<Self, ConfigError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let map: HashMap<String, String> = pairs
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        Self::from_lookup(|key| map.get(key).cloned())
+    }
+
+    pub fn from_lookup<F>(get_var: F) -> Result<Self, ConfigError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let database_url = get_var("DATABASE_URL")
+            .ok_or_else(|| ConfigError::MissingVar("DATABASE_URL".to_string()))?;
 
         let migration_database_url =
-            std::env::var("MIGRATION_DATABASE_URL").unwrap_or_else(|_| database_url.clone());
+            get_var("MIGRATION_DATABASE_URL").unwrap_or_else(|| database_url.clone());
 
         // supports both RUN_MIGRATIONS_ON_STARTUP from .sample_env.env and PENELOPE_RUN_MIGRATIONS
-        let run_migrations = std::env::var("RUN_MIGRATIONS_ON_STARTUP")
-            .or_else(|_| std::env::var("PENELOPE_RUN_MIGRATIONS"))
+        let run_migrations = get_var("RUN_MIGRATIONS_ON_STARTUP")
+            .or_else(|| get_var("PENELOPE_RUN_MIGRATIONS"))
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
 
         // supports BACKEND_HOST from .sample_env.env, PENELOPE_HOST, and SERVER_HOST
-        let server_host = std::env::var("BACKEND_HOST")
-            .or_else(|_| std::env::var("PENELOPE_HOST"))
-            .or_else(|_| std::env::var("SERVER_HOST"))
-            .unwrap_or_else(|_| "127.0.0.1".to_string());
+        let server_host = get_var("BACKEND_HOST")
+            .or_else(|| get_var("PENELOPE_HOST"))
+            .or_else(|| get_var("SERVER_HOST"))
+            .unwrap_or_else(|| "127.0.0.1".to_string());
 
         // supports BACKEND_PORT from .sample_env.env, PENELOPE_PORT, and PORT
-        let server_port = std::env::var("BACKEND_PORT")
-            .or_else(|_| std::env::var("PENELOPE_PORT"))
-            .or_else(|_| std::env::var("PORT"))
-            .unwrap_or_else(|_| "8080".to_string())
+        let server_port = get_var("BACKEND_PORT")
+            .or_else(|| get_var("PENELOPE_PORT"))
+            .or_else(|| get_var("PORT"))
+            .unwrap_or_else(|| "8080".to_string())
             .parse::<u16>()
             .map_err(|e| ConfigError::InvalidInt("PORT".to_string(), e))?;
 
-        let session_secret_raw = std::env::var("SESSION_SECRET")
-            .map_err(|_| ConfigError::MissingVar("SESSION_SECRET".to_string()))?;
+        let session_secret_raw = get_var("SESSION_SECRET")
+            .ok_or_else(|| ConfigError::MissingVar("SESSION_SECRET".to_string()))?;
 
         let session_secret = validate_session_secret(&session_secret_raw)?;
 
         // supports FRONTEND_ORIGIN from .sample_env.env and CORS_ALLOWED_ORIGINS
-        let cors_raw = std::env::var("FRONTEND_ORIGIN")
-            .or_else(|_| std::env::var("CORS_ALLOWED_ORIGINS"))
-            .unwrap_or_else(|_| "http://localhost:5173,http://127.0.0.1:5173".to_string());
+        let cors_raw = get_var("FRONTEND_ORIGIN")
+            .or_else(|| get_var("CORS_ALLOWED_ORIGINS"))
+            .unwrap_or_else(|| "http://localhost:5173,http://127.0.0.1:5173".to_string());
         let cors_allowed_origins = cors_raw
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
 
-        let active_key_id = std::env::var("PENELOPE_ACTIVE_KEY_ID")
-            .map_err(|_| ConfigError::MissingVar("PENELOPE_ACTIVE_KEY_ID".to_string()))?
+        let active_key_id = get_var("PENELOPE_ACTIVE_KEY_ID")
+            .ok_or_else(|| ConfigError::MissingVar("PENELOPE_ACTIVE_KEY_ID".to_string()))?
             .parse::<u16>()
             .map_err(|e| ConfigError::InvalidInt("PENELOPE_ACTIVE_KEY_ID".to_string(), e))?;
 
-        let raw_keys = std::env::var("PENELOPE_ENCRYPTION_KEYS")
-            .map_err(|_| ConfigError::MissingVar("PENELOPE_ENCRYPTION_KEYS".to_string()))?;
+        let raw_keys = get_var("PENELOPE_ENCRYPTION_KEYS")
+            .ok_or_else(|| ConfigError::MissingVar("PENELOPE_ENCRYPTION_KEYS".to_string()))?;
 
         let keyring = KeyRing::from_env_str(active_key_id, &raw_keys)?;
 
         // check first-run admin bootstrap toggle and variables
-        let bootstrap_enabled = std::env::var("BOOTSTRAP_INITIAL_ADMIN")
-            .or_else(|_| std::env::var("PENELOPE_BOOTSTRAP_INITIAL_ADMIN"))
+        let bootstrap_enabled = get_var("BOOTSTRAP_INITIAL_ADMIN")
+            .or_else(|| get_var("PENELOPE_BOOTSTRAP_INITIAL_ADMIN"))
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
 
         let initial_admin = if bootstrap_enabled {
-            let email = std::env::var("INITIAL_ADMIN_EMAIL")
-                .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_EMAIL"))
-                .map_err(|_| ConfigError::MissingVar("INITIAL_ADMIN_EMAIL".to_string()))?;
+            let email = get_var("INITIAL_ADMIN_EMAIL")
+                .or_else(|| get_var("PENELOPE_INITIAL_ADMIN_EMAIL"))
+                .ok_or_else(|| ConfigError::MissingVar("INITIAL_ADMIN_EMAIL".to_string()))?;
 
-            let pw = std::env::var("INITIAL_ADMIN_PASSWORD")
-                .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_PASSWORD"))
-                .map_err(|_| ConfigError::MissingVar("INITIAL_ADMIN_PASSWORD".to_string()))?;
+            let pw = get_var("INITIAL_ADMIN_PASSWORD")
+                .or_else(|| get_var("PENELOPE_INITIAL_ADMIN_PASSWORD"))
+                .ok_or_else(|| ConfigError::MissingVar("INITIAL_ADMIN_PASSWORD".to_string()))?;
 
-            let full_name = std::env::var("INITIAL_ADMIN_NAME")
-                .or_else(|_| std::env::var("PENELOPE_INITIAL_ADMIN_NAME"))
-                .unwrap_or_else(|_| "System Administrator".to_string());
+            let full_name = get_var("INITIAL_ADMIN_NAME")
+                .or_else(|| get_var("PENELOPE_INITIAL_ADMIN_NAME"))
+                .unwrap_or_else(|| "System Administrator".to_string());
 
             Some(validate_initial_admin(&email, &pw, &full_name)?)
         } else {
@@ -363,29 +382,29 @@ impl AppConfig {
         };
 
         let default_currency_code =
-            std::env::var("DEFAULT_CURRENCY_CODE").unwrap_or_else(|_| "EUR".to_string());
+            get_var("DEFAULT_CURRENCY_CODE").unwrap_or_else(|| "EUR".to_string());
 
-        let seed_demo_data = std::env::var("SEED_DEMO_DATA")
+        let seed_demo_data = get_var("SEED_DEMO_DATA")
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
 
-        let session_idle_ttl_hours = std::env::var("SESSION_IDLE_TTL_HOURS")
-            .unwrap_or_else(|_| "24".to_string())
+        let session_idle_ttl_hours = get_var("SESSION_IDLE_TTL_HOURS")
+            .unwrap_or_else(|| "24".to_string())
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("SESSION_IDLE_TTL_HOURS".to_string(), e))?;
 
-        let session_absolute_ttl_hours = std::env::var("SESSION_ABSOLUTE_TTL_HOURS")
-            .unwrap_or_else(|_| "168".to_string())
+        let session_absolute_ttl_hours = get_var("SESSION_ABSOLUTE_TTL_HOURS")
+            .unwrap_or_else(|| "168".to_string())
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("SESSION_ABSOLUTE_TTL_HOURS".to_string(), e))?;
 
-        let rate_limit_auth_per_min = std::env::var("RATE_LIMIT_AUTH_PER_MIN")
-            .unwrap_or_else(|_| "10".to_string())
+        let rate_limit_auth_per_min = get_var("RATE_LIMIT_AUTH_PER_MIN")
+            .unwrap_or_else(|| "10".to_string())
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("RATE_LIMIT_AUTH_PER_MIN".to_string(), e))?;
 
-        let rate_limit_api_per_min = std::env::var("RATE_LIMIT_API_PER_MIN")
-            .unwrap_or_else(|_| "120".to_string())
+        let rate_limit_api_per_min = get_var("RATE_LIMIT_API_PER_MIN")
+            .unwrap_or_else(|| "120".to_string())
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("RATE_LIMIT_API_PER_MIN".to_string(), e))?;
 
@@ -490,33 +509,38 @@ mod tests {
         ));
     }
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn sample_env_pairs() -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "DATABASE_URL",
+                "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db"
+                    .to_string(),
+            ),
+            (
+                "MIGRATION_DATABASE_URL",
+                "postgres://penelope_owner:penelope_owner_password@localhost:5432/penelope_db"
+                    .to_string(),
+            ),
+            ("BACKEND_HOST", "0.0.0.0".to_string()),
+            ("BACKEND_PORT", "9090".to_string()),
+            ("FRONTEND_ORIGIN", "http://localhost:3000".to_string()),
+            ("RUN_MIGRATIONS_ON_STARTUP", "true".to_string()),
+            ("SESSION_SECRET", VALID_KEY_2.to_string()),
+            ("PENELOPE_ACTIVE_KEY_ID", "1".to_string()),
+            ("PENELOPE_ENCRYPTION_KEYS", format!("1:{VALID_KEY_1}")),
+            ("BOOTSTRAP_INITIAL_ADMIN", "true".to_string()),
+            ("INITIAL_ADMIN_EMAIL", "boss@penelope.local".to_string()),
+            (
+                "INITIAL_ADMIN_PASSWORD",
+                "strong_admin_pass_123".to_string(),
+            ),
+            ("INITIAL_ADMIN_NAME", "Lead Admin".to_string()),
+        ]
+    }
 
     #[test]
     fn app_config_parses_sample_env_variables() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // test environment matching .sample_env.env names with valid 64-char hex secret
-        std::env::set_var(
-            "DATABASE_URL",
-            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db",
-        );
-        std::env::set_var(
-            "MIGRATION_DATABASE_URL",
-            "postgres://penelope_owner:penelope_owner_password@localhost:5432/penelope_db",
-        );
-        std::env::set_var("BACKEND_HOST", "0.0.0.0");
-        std::env::set_var("BACKEND_PORT", "9090");
-        std::env::set_var("FRONTEND_ORIGIN", "http://localhost:3000");
-        std::env::set_var("RUN_MIGRATIONS_ON_STARTUP", "true");
-        std::env::set_var("SESSION_SECRET", VALID_KEY_2);
-        std::env::set_var("PENELOPE_ACTIVE_KEY_ID", "1");
-        std::env::set_var("PENELOPE_ENCRYPTION_KEYS", format!("1:{VALID_KEY_1}"));
-        std::env::set_var("BOOTSTRAP_INITIAL_ADMIN", "true");
-        std::env::set_var("INITIAL_ADMIN_EMAIL", "boss@penelope.local");
-        std::env::set_var("INITIAL_ADMIN_PASSWORD", "strong_admin_pass_123");
-        std::env::set_var("INITIAL_ADMIN_NAME", "Lead Admin");
-
-        let config = AppConfig::from_env().expect("valid app config");
+        let config = AppConfig::from_pairs(sample_env_pairs()).expect("valid app config");
         assert_eq!(config.server_host, "0.0.0.0");
         assert_eq!(config.server_port, 9090);
         assert_eq!(config.cors_allowed_origins, vec!["http://localhost:3000"]);
@@ -529,16 +553,10 @@ mod tests {
 
     #[test]
     fn rejects_short_session_secret() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var(
-            "DATABASE_URL",
-            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db",
-        );
-        std::env::set_var("SESSION_SECRET", "too_short");
-        std::env::set_var("PENELOPE_ACTIVE_KEY_ID", "1");
-        std::env::set_var("PENELOPE_ENCRYPTION_KEYS", format!("1:{VALID_KEY_1}"));
+        let mut pairs = sample_env_pairs();
+        pairs.push(("SESSION_SECRET", "too_short".to_string()));
 
-        let err = AppConfig::from_env().unwrap_err();
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
         match err {
             ConfigError::SessionSecretTooShort(len) => assert_eq!(len, 9),
             other => panic!("expected SessionSecretTooShort, got {other:?}"),
@@ -547,8 +565,13 @@ mod tests {
 
     #[test]
     fn rejects_placeholder_session_secret() {
-        let sample_placeholder = "CHANGE_ME_GENERATE_64_CHAR_SECRET_WITH_OPENSSL_RAND_HEX_32";
-        let err = validate_session_secret(sample_placeholder).unwrap_err();
+        let mut pairs = sample_env_pairs();
+        pairs.push((
+            "SESSION_SECRET",
+            "CHANGE_ME_GENERATE_64_CHAR_SECRET_WITH_OPENSSL_RAND_HEX_32".to_string(),
+        ));
+
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
         match err {
             ConfigError::PlaceholderForbidden(var) => assert_eq!(var, "SESSION_SECRET"),
             other => panic!("expected PlaceholderForbidden, got {other:?}"),
@@ -557,31 +580,36 @@ mod tests {
 
     #[test]
     fn rejects_non_hex_or_all_zero_session_secret() {
-        let non_hex_64 = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-        let err_hex = validate_session_secret(non_hex_64).unwrap_err();
+        let mut non_hex_pairs = sample_env_pairs();
+        non_hex_pairs.push((
+            "SESSION_SECRET",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string(),
+        ));
+        let err_hex = AppConfig::from_pairs(non_hex_pairs).unwrap_err();
         assert!(matches!(err_hex, ConfigError::InvalidSessionSecretHex(_)));
 
-        let err_zero = validate_session_secret(ZERO_KEY).unwrap_err();
+        let mut zero_pairs = sample_env_pairs();
+        zero_pairs.push(("SESSION_SECRET", ZERO_KEY.to_string()));
+        let err_zero = AppConfig::from_pairs(zero_pairs).unwrap_err();
         assert!(matches!(err_zero, ConfigError::ZeroSessionSecretForbidden));
     }
 
     #[test]
     fn rejects_placeholder_or_short_initial_admin_password() {
-        let sample_pw = "CHANGE_ME_MIN_12_CHAR_ADMIN_PASS";
-        let err_placeholder =
-            validate_initial_admin("admin@penelope.local", sample_pw, "System Administrator")
-                .unwrap_err();
+        let mut placeholder_pairs = sample_env_pairs();
+        placeholder_pairs.push((
+            "INITIAL_ADMIN_PASSWORD",
+            "CHANGE_ME_MIN_12_CHAR_ADMIN_PASS".to_string(),
+        ));
+        let err_placeholder = AppConfig::from_pairs(placeholder_pairs).unwrap_err();
         match err_placeholder {
             ConfigError::PlaceholderForbidden(var) => assert_eq!(var, "INITIAL_ADMIN_PASSWORD"),
             other => panic!("expected PlaceholderForbidden, got {other:?}"),
         }
 
-        let err_short = validate_initial_admin(
-            "admin@penelope.local",
-            "short_pw_11",
-            "System Administrator",
-        )
-        .unwrap_err();
+        let mut short_pairs = sample_env_pairs();
+        short_pairs.push(("INITIAL_ADMIN_PASSWORD", "short_pw_11".to_string()));
+        let err_short = AppConfig::from_pairs(short_pairs).unwrap_err();
         match err_short {
             ConfigError::AdminPasswordTooShort(len) => assert_eq!(len, 11),
             other => panic!("expected AdminPasswordTooShort, got {other:?}"),
