@@ -49,6 +49,11 @@ pub enum ConfigError {
 
     #[error("initial admin password is too short: must be at least 12 characters, got {0}")]
     AdminPasswordTooShort(usize),
+
+    #[error(
+        "MIGRATION_DATABASE_URL must use the migration owner role and cannot equal DATABASE_URL"
+    )]
+    MigrationUrlMatchesRuntimeUrl,
 }
 
 fn is_placeholder_value(val: &str) -> bool {
@@ -242,7 +247,7 @@ impl std::fmt::Debug for InitialAdminConfig {
 #[derive(Clone)]
 pub struct AppConfig {
     pub database_url: String,
-    pub migration_database_url: String,
+    pub migration_database_url: Option<String>,
     pub run_migrations: bool,
     pub server_host: String,
     pub server_port: u16,
@@ -307,16 +312,34 @@ impl AppConfig {
         F: Fn(&str) -> Option<String>,
     {
         let database_url = get_var("DATABASE_URL")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
             .ok_or_else(|| ConfigError::MissingVar("DATABASE_URL".to_string()))?;
-
-        let migration_database_url =
-            get_var("MIGRATION_DATABASE_URL").unwrap_or_else(|| database_url.clone());
 
         // supports both RUN_MIGRATIONS_ON_STARTUP from .sample_env.env and PENELOPE_RUN_MIGRATIONS
         let run_migrations = get_var("RUN_MIGRATIONS_ON_STARTUP")
             .or_else(|| get_var("PENELOPE_RUN_MIGRATIONS"))
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
+
+        let raw_migration_url = get_var("MIGRATION_DATABASE_URL")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        if let Some(ref mig_url) = raw_migration_url {
+            if mig_url == &database_url {
+                return Err(ConfigError::MigrationUrlMatchesRuntimeUrl);
+            }
+        }
+
+        let migration_database_url = if run_migrations {
+            Some(
+                raw_migration_url
+                    .ok_or_else(|| ConfigError::MissingVar("MIGRATION_DATABASE_URL".to_string()))?,
+            )
+        } else {
+            raw_migration_url
+        };
 
         // supports BACKEND_HOST from .sample_env.env, PENELOPE_HOST, and SERVER_HOST
         let server_host = get_var("BACKEND_HOST")
@@ -614,5 +637,44 @@ mod tests {
             ConfigError::AdminPasswordTooShort(len) => assert_eq!(len, 11),
             other => panic!("expected AdminPasswordTooShort, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_missing_migration_url_when_migrations_enabled() {
+        let pairs: Vec<_> = sample_env_pairs()
+            .into_iter()
+            .filter(|(k, _)| *k != "MIGRATION_DATABASE_URL")
+            .collect();
+
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
+        match err {
+            ConfigError::MissingVar(var) => assert_eq!(var, "MIGRATION_DATABASE_URL"),
+            other => panic!("expected MissingVar(MIGRATION_DATABASE_URL), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_migration_url_matching_runtime_database_url() {
+        let mut pairs = sample_env_pairs();
+        pairs.push((
+            "MIGRATION_DATABASE_URL",
+            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db".to_string(),
+        ));
+
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
+        assert!(matches!(err, ConfigError::MigrationUrlMatchesRuntimeUrl));
+    }
+
+    #[test]
+    fn allows_missing_migration_url_when_migrations_disabled() {
+        let mut pairs: Vec<_> = sample_env_pairs()
+            .into_iter()
+            .filter(|(k, _)| *k != "MIGRATION_DATABASE_URL")
+            .collect();
+        pairs.push(("RUN_MIGRATIONS_ON_STARTUP", "false".to_string()));
+
+        let config = AppConfig::from_pairs(pairs).expect("valid config with migrations disabled");
+        assert!(!config.run_migrations);
+        assert!(config.migration_database_url.is_none());
     }
 }
