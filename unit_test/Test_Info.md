@@ -46,6 +46,7 @@ Integration tests live in `backend/tests/`:
 
 ## Notes
 
+- Supported `-Target` values for `-Suite backend`: `unit`, `role_boundaries` (`roles`), `db`, `concurrency` (`idempotency`), and `mwa` (`ledger`, `append_only`). Passing an unknown target or combining `-Target` with `-Private` or `-Suite frontend` fails immediately.
 - Reports get saved to `unit_test/reports/` (or `unit_test/.private_tests/reports/` for private runs). Both folders are gitignored.
 - If a runner finishes with 0 tests executed, the script treats it as a failure.
 - When running with `-Private`, temporary private test files are cleaned up automatically after the run.
