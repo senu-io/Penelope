@@ -69,3 +69,5 @@ This document tracks the modular implementation progress and version control his
 | `67f739e` | 2026-11-04 | `feat(backend): implement AppConfig, multi-key KeyRing, and AppError envelope` |
 | `ab58a29` | 2026-11-05 | `docs: Updated Test_Info.md` |
 | `1387e2d` | 2026-11-05 | `fix(config): align AppConfig parser with .sample_env.env and add SESSION_SECRET` |
+| `f106be3` | 2026-11-05 | `test(infra): updated README.md and modified test comments` |
+| `a9855db` | 2026-11-05 | `test(infra): split integration tests into modular targets and granular runner` |

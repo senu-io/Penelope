@@ -25,7 +25,8 @@ pub async fn setup_pools() -> (PgPool, PgPool) {
     });
 
     let owner_opts = PgConnectOptions::from_str(&migration_url).expect("valid migration url");
-    let app_opts = PgConnectOptions::from_str(&app_url).unwrap_or_else(|_| owner_opts.clone());
+    let app_opts =
+        PgConnectOptions::from_str(&app_url).expect("valid DATABASE_URL for penelope_app");
 
     // run migrations via sqlx migrator and re-run raw migration script once before parallel tests
     MIGRATION_ONCE
@@ -67,6 +68,25 @@ pub async fn setup_pools() -> (PgPool, PgPool) {
         .connect_with(app_opts)
         .await
         .expect("failed to connect to postgres with DATABASE_URL (penelope_app)");
+
+    // verify connection role identities before running any test queries
+    let owner_user: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&owner_pool)
+        .await
+        .expect("query owner_pool current_user");
+    assert_eq!(
+        owner_user, "penelope_owner",
+        "owner_pool must connect as penelope_owner"
+    );
+
+    let app_user: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(&app_pool)
+        .await
+        .expect("query app_pool current_user");
+    assert_eq!(
+        app_user, "penelope_app",
+        "app_pool must connect as penelope_app"
+    );
 
     (owner_pool, app_pool)
 }

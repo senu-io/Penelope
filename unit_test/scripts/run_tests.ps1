@@ -1,12 +1,25 @@
 param(
     [ValidateSet("backend", "frontend", "full")]
     [string]$Suite = "full",
+    [ValidateSet("", "unit", "role_boundaries", "roles", "db", "concurrency", "idempotency", "mwa", "ledger", "append_only")]
     [string]$Target = "",
     [switch]$Private,
     [string]$RepoRootOverride = ""
 )
 
 $ErrorActionPreference = "Continue"
+
+# reject invalid flag combinations before running any checks
+if (-not [string]::IsNullOrWhiteSpace($Target)) {
+    if ($Private) {
+        Write-Error "Invalid arguments: -Target cannot be combined with -Private."
+        exit 1
+    }
+    if ($Suite -eq "frontend") {
+        Write-Error "Invalid arguments: backend -Target '$Target' cannot be used with -Suite frontend."
+        exit 1
+    }
+}
 
 # resolve [Penelope] repo root whether invoked from unit_test/scripts/ or .private_tests/scripts/
 if (-not [string]::IsNullOrWhiteSpace($RepoRootOverride)) {
@@ -28,6 +41,8 @@ $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 
 $results = @()
 $overallPass = $true
+$testRunnerSteps = 0
+$totalTestsRun = 0
 
 function Add-StepResult {
     param(
@@ -73,6 +88,9 @@ function Invoke-TestRunnerStep {
     foreach ($m in $regexMatches) {
         $totalExecuted += [int]$m.Groups[1].Value
     }
+
+    $script:testRunnerSteps += 1
+    $script:totalTestsRun += $totalExecuted
 
     $status = if ($exitCode -eq 0 -and $totalExecuted -gt 0) { "PASS" } else { "FAIL" }
     if ($exitCode -eq 0 -and $totalExecuted -eq 0) {
@@ -197,8 +215,8 @@ if ($Suite -in @("frontend", "full")) {
     }
 }
 
-if ($results.Count -eq 0) {
-    Add-StepResult -Name "Test Execution" -Status "FAIL" -ExitCode 1 -DurationMs 0 -TestsExecuted 0 -Output "Zero test steps were executed."
+if ($results.Count -eq 0 -or $testRunnerSteps -eq 0 -or $totalTestsRun -eq 0) {
+    Add-StepResult -Name "Test Execution Gate" -Status "FAIL" -ExitCode 1 -DurationMs 0 -TestsExecuted 0 -Output "Zero tests were executed ($testRunnerSteps test steps, $totalTestsRun tests). Vacuous PASS is forbidden."
 }
 
 $finalStatus = if ($overallPass) { "PASS" } else { "FAIL" }
