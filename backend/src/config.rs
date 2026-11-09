@@ -1,7 +1,10 @@
 // app configuration and encryption keyring validation
 
 use secrecy::SecretString;
+use sqlx::postgres::PgConnectOptions;
+use sqlx::PgPool;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -54,6 +57,53 @@ pub enum ConfigError {
         "MIGRATION_DATABASE_URL must use the migration owner role and cannot equal DATABASE_URL"
     )]
     MigrationUrlMatchesRuntimeUrl,
+
+    #[error("invalid database connection url for {0}")]
+    InvalidDatabaseUrl(String),
+
+    #[error("invalid database role for {var_name}: expected '{expected}', got '{actual}'")]
+    InvalidDatabaseRole {
+        var_name: String,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("live database role verification failed: {0}")]
+    DatabaseRoleVerificationFailed(String),
+}
+
+// validate database connection url syntax and expected role username
+pub fn validate_db_url_role(
+    var_name: &str,
+    url: &str,
+    expected_role: &str,
+) -> Result<(), ConfigError> {
+    let opts = PgConnectOptions::from_str(url)
+        .map_err(|_| ConfigError::InvalidDatabaseUrl(var_name.to_string()))?;
+    let actual_user = opts.get_username();
+    if actual_user != expected_role {
+        return Err(ConfigError::InvalidDatabaseRole {
+            var_name: var_name.to_string(),
+            expected: expected_role.to_string(),
+            actual: actual_user.to_string(),
+        });
+    }
+    Ok(())
+}
+
+// verify live postgres connection pool authenticates as the expected role before running migrations or queries
+pub async fn verify_pool_role(pool: &PgPool, expected_role: &str) -> Result<(), ConfigError> {
+    let current_user: String = sqlx::query_scalar("SELECT current_user")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| ConfigError::DatabaseRoleVerificationFailed(e.to_string()))?;
+
+    if current_user != expected_role {
+        return Err(ConfigError::DatabaseRoleVerificationFailed(format!(
+            "expected connected role '{expected_role}', got '{current_user}'"
+        )));
+    }
+    Ok(())
 }
 
 fn is_placeholder_value(val: &str) -> bool {
@@ -316,6 +366,8 @@ impl AppConfig {
             .filter(|v| !v.is_empty())
             .ok_or_else(|| ConfigError::MissingVar("DATABASE_URL".to_string()))?;
 
+        validate_db_url_role("DATABASE_URL", &database_url, "penelope_app")?;
+
         // supports both RUN_MIGRATIONS_ON_STARTUP from .sample_env.env and PENELOPE_RUN_MIGRATIONS
         let run_migrations = get_var("RUN_MIGRATIONS_ON_STARTUP")
             .or_else(|| get_var("PENELOPE_RUN_MIGRATIONS"))
@@ -330,6 +382,7 @@ impl AppConfig {
             if mig_url == &database_url {
                 return Err(ConfigError::MigrationUrlMatchesRuntimeUrl);
             }
+            validate_db_url_role("MIGRATION_DATABASE_URL", mig_url, "penelope_owner")?;
         }
 
         let migration_database_url = if run_migrations {
@@ -676,5 +729,52 @@ mod tests {
         let config = AppConfig::from_pairs(pairs).expect("valid config with migrations disabled");
         assert!(!config.run_migrations);
         assert!(config.migration_database_url.is_none());
+    }
+
+    #[test]
+    fn rejects_superuser_or_wrong_role_in_migration_url() {
+        let mut pairs = sample_env_pairs();
+        pairs.push((
+            "MIGRATION_DATABASE_URL",
+            "postgres://postgres:penelope_owner_password@localhost:5432/penelope_db".to_string(),
+        ));
+
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
+        match err {
+            ConfigError::InvalidDatabaseRole {
+                var_name,
+                expected,
+                actual,
+            } => {
+                assert_eq!(var_name, "MIGRATION_DATABASE_URL");
+                assert_eq!(expected, "penelope_owner");
+                assert_eq!(actual, "postgres");
+            }
+            other => panic!("expected InvalidDatabaseRole, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_wrong_role_in_runtime_database_url() {
+        let mut pairs = sample_env_pairs();
+        pairs.push((
+            "DATABASE_URL",
+            "postgres://penelope_owner:penelope_owner_password@localhost:5432/penelope_db"
+                .to_string(),
+        ));
+
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
+        match err {
+            ConfigError::InvalidDatabaseRole {
+                var_name,
+                expected,
+                actual,
+            } => {
+                assert_eq!(var_name, "DATABASE_URL");
+                assert_eq!(expected, "penelope_app");
+                assert_eq!(actual, "penelope_owner");
+            }
+            other => panic!("expected InvalidDatabaseRole, got {other:?}"),
+        }
     }
 }

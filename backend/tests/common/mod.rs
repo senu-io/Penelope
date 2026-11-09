@@ -39,6 +39,15 @@ pub async fn setup_pools() -> (PgPool, PgPool) {
                     .await
                     .expect("failed to connect migration pool");
 
+                let mig_user: String = sqlx::query_scalar("SELECT current_user")
+                    .fetch_one(&mig_pool)
+                    .await
+                    .expect("query mig_pool current_user");
+                assert_eq!(
+                    mig_user, "penelope_owner",
+                    "mig_pool must connect as penelope_owner before running migrations"
+                );
+
                 sqlx::migrate!("./migrations")
                     .run(&mig_pool)
                     .await
