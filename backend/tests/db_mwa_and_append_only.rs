@@ -8,8 +8,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
-    let (owner_pool, app_pool) = setup_pools().await;
+async fn discrete_and_fractional_unit_rules() {
+    let (_owner_pool, app_pool) = setup_pools().await;
     let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
     let (discrete_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
     let (frac_id, _) = insert_test_product(&app_pool, cat_id, "kg", true).await;
@@ -51,10 +51,15 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         kg_recv.get::<Decimal, _>("unit_cost_eur_snapshot"),
         dec("2.000000")
     );
+}
 
-    // mwa 6-decimal precision and exact total_cost_basis_eur:
-    // receive 3 ea @ 0.100000 EUR -> total_cost_basis = 0.300000, unit_cost = 0.100000
-    // receive 1 ea @ 0.110000 EUR -> total_cost_basis = 0.410000, unit_cost = 0.102500
+#[tokio::test]
+async fn mwa_cost_basis_and_reporting_rounding() {
+    let (_owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
+    let (discrete_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
+
+    // receive 3 ea @ 0.100000 EUR -> basis 0.300000; then 1 ea @ 0.110000 EUR -> basis 0.410000, unit_cost 0.102500
     sqlx::query(
         "SELECT * FROM public.record_stock_movement($1, $2, 'receive', $3, $4, 'PO-101', 'lot 1', $5, NULL, 'op@test', '127.0.0.1')",
     )
@@ -89,7 +94,6 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         dec("0.102500")
     );
 
-    // verify reporting-boundary line-item valuation round(total_cost_basis_eur, 2) = 0.41 EUR
     let val_row = sqlx::query(
         "SELECT pg_catalog.round(total_cost_basis_eur, 2) AS line_valuation_eur FROM public.products WHERE id = $1",
     )
@@ -98,8 +102,12 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
     .await
     .expect("query line valuation");
     assert_eq!(val_row.get::<Decimal, _>("line_valuation_eur"), dec("0.41"));
+}
 
-    // positive cycle count with non-terminating unit cost fraction uses prev_total_cost_basis_eur / prev_qty
+#[tokio::test]
+async fn cycle_count_valuation_rules() {
+    let (_owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
     let (cycle_prod_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
 
     // positive cycle count on zero stock without inbound cost must fail
@@ -117,7 +125,7 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         "positive cycle count on zero stock without explicit cost must fail"
     );
 
-    // receive 1 ea @ 1.000000 and 2 ea @ 0.000000 so 3 units have total_cost_basis = 1.000000 and unit_cost = 0.333333
+    // receive 1 ea @ 1.000000 and 2 ea @ 0.000000 so 3 units have basis = 1.000000 and unit_cost = 0.333333
     sqlx::query(
         "SELECT * FROM public.record_stock_movement($1, $2, 'receive', $3, $4, 'PO-C1', 'paid unit', $5, NULL, 'op@test', '127.0.0.1')",
     )
@@ -151,7 +159,7 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         dec("0.333333")
     );
 
-    // now positive cycle count of +3 ea with null inbound cost must add round(1.000000 * 3 / 3, 6) = 1.000000 -> total 2.000000 (not 1.999999)
+    // positive cycle count of +3 uses prev_total_cost_basis_eur / prev_qty -> total 2.000000 (not 1.999999)
     let cc_plus = sqlx::query(
         "SELECT new_qty, total_cost_basis_eur_snapshot, unit_cost_eur_snapshot FROM public.record_stock_movement($1, $2, 'cycle_count', $3, NULL, 'CC-1', 'surplus count', $4, NULL, 'op@test', '127.0.0.1')",
     )
@@ -171,13 +179,20 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         cc_plus.get::<Decimal, _>("unit_cost_eur_snapshot"),
         dec("0.333333")
     );
+}
 
-    // audit whitelist: record_audit_event allows valid pair, rejects 'stock_ledger' and unknown actions
+#[tokio::test]
+async fn audit_whitelist_and_append_only_triggers() {
+    let (owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
+    let (product_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
+
+    // audit whitelist: allow valid pair, reject 'stock_ledger' forgery
     let valid_audit = sqlx::query(
         "SELECT id FROM public.record_audit_event($1, NULL, 'op@test', 'product.create', 'product', $2, '127.0.0.1', $3)",
     )
     .bind(user_id)
-    .bind(discrete_id.to_string())
+    .bind(product_id.to_string())
     .bind(json!({"sku": "TEST"}))
     .fetch_one(&app_pool)
     .await;
@@ -187,7 +202,7 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         "SELECT id FROM public.record_audit_event($1, NULL, 'op@test', 'stock.movement.receive', 'stock_ledger', $2, '127.0.0.1', $3)",
     )
     .bind(user_id)
-    .bind(discrete_id.to_string())
+    .bind(product_id.to_string())
     .bind(json!({}))
     .fetch_one(&app_pool)
     .await;
@@ -195,6 +210,19 @@ async fn mwa_costing_cycle_counts_and_append_only_triggers_work() {
         forged_ledger_audit.is_err(),
         "record_audit_event must reject entity_type = 'stock_ledger'"
     );
+
+    // seed one ledger row so UPDATE/DELETE triggers operate against an actual row too
+    sqlx::query(
+        "SELECT id FROM public.record_stock_movement($1, $2, 'receive', $3, $4, 'PO-TRG', 'trigger test', $5, NULL, 'op@test', '127.0.0.1')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(product_id)
+    .bind(dec("1.0000"))
+    .bind(dec("5.000000"))
+    .bind(user_id)
+    .fetch_one(&app_pool)
+    .await
+    .expect("seed ledger row for trigger check");
 
     // append-only triggers reject update, delete, and truncate even when invoked by penelope_owner
     let owner_update_ledger = sqlx::query("UPDATE public.stock_ledger SET reason = 'tampered'")

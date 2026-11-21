@@ -12,11 +12,11 @@ $ErrorActionPreference = "Continue"
 # reject invalid flag combinations before running any checks
 if (-not [string]::IsNullOrWhiteSpace($Target)) {
     if ($Private) {
-        Write-Error "Invalid arguments: -Target cannot be combined with -Private."
+        [Console]::Error.WriteLine("Invalid arguments: -Target cannot be combined with -Private.")
         exit 1
     }
-    if ($Suite -eq "frontend") {
-        Write-Error "Invalid arguments: backend -Target '$Target' cannot be used with -Suite frontend."
+    if ($Suite -ne "backend") {
+        [Console]::Error.WriteLine("Invalid arguments: backend -Target '$Target' requires -Suite backend (cannot be used with -Suite $Suite).")
         exit 1
     }
 }
@@ -64,12 +64,26 @@ function Add-StepResult {
     }
 }
 
+function Format-CommandOutput {
+    param([object[]]$RawStream)
+    $lines = foreach ($item in $RawStream) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) {
+            $item.Exception.Message
+        } else {
+            "$item"
+        }
+    }
+    $joined = ($lines -join [Environment]::NewLine)
+    [regex]::Replace($joined, '\x1B\[[0-9;]*[a-zA-Z]', '').Trim()
+}
+
 function Invoke-QualityStep {
     param([string]$Name, [scriptblock]$Action)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $output = & $Action 2>&1 | Out-String
+    $raw = & $Action 2>&1
     $exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
     $sw.Stop()
+    $output = Format-CommandOutput $raw
     $status = if ($exitCode -eq 0) { "PASS" } else { "FAIL" }
     Add-StepResult -Name $Name -Status $status -ExitCode $exitCode -DurationMs $sw.ElapsedMilliseconds -TestsExecuted 0 -Output $output
 }
@@ -77,12 +91,12 @@ function Invoke-QualityStep {
 function Invoke-TestRunnerStep {
     param([string]$Name, [scriptblock]$Action, [string]$CountPattern)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $output = & $Action 2>&1 | Out-String
+    $raw = & $Action 2>&1
     $exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 1 }
     $sw.Stop()
 
     # strip ansi escape codes before counting passed tests; fail if 0 tests ran
-    $cleanOutput = [regex]::Replace($output, '\x1B\[[0-9;]*[a-zA-Z]', '')
+    $cleanOutput = Format-CommandOutput $raw
     $totalExecuted = 0
     $regexMatches = [regex]::Matches($cleanOutput, $CountPattern)
     foreach ($m in $regexMatches) {
@@ -139,24 +153,11 @@ if ($Suite -in @("backend", "full")) {
                 }
             }
 
-            # run private ai and security verification checks
-            $privateScriptsDir = Join-Path $repoRoot "unit_test\.private_tests\scripts"
-            $aiMdScript = Join-Path $privateScriptsDir "check_ai_markdown.mjs"
-            if (Test-Path -LiteralPath $aiMdScript) {
-                Invoke-QualityStep "Private AI Markdown Check (check_ai_markdown.mjs)" {
-                    node $aiMdScript
-                }
-            }
-            $aiCommentsScript = Join-Path $privateScriptsDir "check_ai_comments.mjs"
-            if (Test-Path -LiteralPath $aiCommentsScript) {
-                Invoke-QualityStep "Private AI Comments Check (check_ai_comments.mjs)" {
-                    node $aiCommentsScript
-                }
-            }
-            $repoSecScript = Join-Path $privateScriptsDir "check_repo_security.mjs"
-            if (Test-Path -LiteralPath $repoSecScript) {
-                Invoke-QualityStep "Private Repo Security & Boundary Audit (check_repo_security.mjs)" {
-                    node $repoSecScript
+            # invoke local verification checks if present
+            $privateChecksScript = Join-Path $repoRoot "unit_test\.private_tests\scripts\run_private_checks.ps1"
+            if (Test-Path -LiteralPath $privateChecksScript) {
+                Invoke-QualityStep "Local verification checks" {
+                    powershell -ExecutionPolicy Bypass -File $privateChecksScript
                 }
             }
         } else {

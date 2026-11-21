@@ -1,5 +1,6 @@
 // shared test setup, database pool connection, and fixture helpers
 
+use penelope_backend::config::verify_pool_role;
 use rust_decimal::Decimal;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
@@ -15,14 +16,9 @@ pub fn dec(val: &str) -> Decimal {
 pub async fn setup_pools() -> (PgPool, PgPool) {
     dotenvy::dotenv().ok();
 
-    let migration_url = std::env::var("MIGRATION_DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://penelope_owner:penelope_owner_local_dev_pw_2026@localhost:5432/penelope_db"
-            .to_string()
-    });
-    let app_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://penelope_app:penelope_app_local_dev_pw_2026@localhost:5432/penelope_db"
-            .to_string()
-    });
+    let migration_url = std::env::var("MIGRATION_DATABASE_URL")
+        .expect("MIGRATION_DATABASE_URL must be set in .env");
+    let app_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env");
 
     let owner_opts = PgConnectOptions::from_str(&migration_url).expect("valid migration url");
     let app_opts =
@@ -39,14 +35,9 @@ pub async fn setup_pools() -> (PgPool, PgPool) {
                     .await
                     .expect("failed to connect migration pool");
 
-                let mig_user: String = sqlx::query_scalar("SELECT current_user")
-                    .fetch_one(&mig_pool)
+                verify_pool_role(&mig_pool, "penelope_owner")
                     .await
-                    .expect("query mig_pool current_user");
-                assert_eq!(
-                    mig_user, "penelope_owner",
-                    "mig_pool must connect as penelope_owner before running migrations"
-                );
+                    .expect("mig_pool must connect as penelope_owner before running migrations");
 
                 sqlx::migrate!("./migrations")
                     .run(&mig_pool)
@@ -79,23 +70,12 @@ pub async fn setup_pools() -> (PgPool, PgPool) {
         .expect("failed to connect to postgres with DATABASE_URL (penelope_app)");
 
     // verify connection role identities before running any test queries
-    let owner_user: String = sqlx::query_scalar("SELECT current_user")
-        .fetch_one(&owner_pool)
+    verify_pool_role(&owner_pool, "penelope_owner")
         .await
-        .expect("query owner_pool current_user");
-    assert_eq!(
-        owner_user, "penelope_owner",
-        "owner_pool must connect as penelope_owner"
-    );
-
-    let app_user: String = sqlx::query_scalar("SELECT current_user")
-        .fetch_one(&app_pool)
+        .expect("owner_pool must connect as penelope_owner");
+    verify_pool_role(&app_pool, "penelope_app")
         .await
-        .expect("query app_pool current_user");
-    assert_eq!(
-        app_user, "penelope_app",
-        "app_pool must connect as penelope_app"
-    );
+        .expect("app_pool must connect as penelope_app");
 
     (owner_pool, app_pool)
 }
@@ -138,7 +118,7 @@ pub async fn insert_test_product(
     allow_fractional: bool,
 ) -> (Uuid, String) {
     let product_id = Uuid::new_v4();
-    let sku = format!("SKU-{}", &Uuid::new_v4().simple().to_string()[..10]);
+    let sku = format!("SKU-{}", &Uuid::new_v4().simple().to_string()[..10]).to_uppercase();
     sqlx::query(
         r#"
         INSERT INTO public.products (

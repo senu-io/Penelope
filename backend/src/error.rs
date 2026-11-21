@@ -183,6 +183,27 @@ impl AppError {
     }
 }
 
+fn map_p0403_error(
+    msg: &str,
+    detail: Option<&str>,
+) -> (StatusCode, String, String, Option<serde_json::Value>) {
+    if msg.starts_with("APPEND_ONLY_VIOLATION") {
+        (
+            StatusCode::FORBIDDEN,
+            "APPEND_ONLY_VIOLATION".to_string(),
+            "Historical ledger and audit records are immutable.".to_string(),
+            None,
+        )
+    } else {
+        (
+            StatusCode::FORBIDDEN,
+            msg.to_string(),
+            detail.unwrap_or(msg).to_string(),
+            None,
+        )
+    }
+}
+
 fn map_database_error(
     err: &sqlx::Error,
 ) -> (StatusCode, String, String, Option<serde_json::Value>) {
@@ -208,12 +229,7 @@ fn map_database_error(
                 detail.unwrap_or(db_err.message()).to_string(),
                 None,
             ),
-            "P0403" => (
-                StatusCode::FORBIDDEN,
-                db_err.message().to_string(),
-                detail.unwrap_or(db_err.message()).to_string(),
-                None,
-            ),
+            "P0403" => map_p0403_error(db_err.message(), detail),
             "P0404" => (
                 StatusCode::NOT_FOUND,
                 db_err.message().to_string(),
@@ -356,5 +372,17 @@ mod tests {
             "application/json; charset=utf-8"
         );
         assert_eq!(resp.headers().get(NOSNIFF_HEADER).unwrap(), NOSNIFF_VALUE);
+    }
+
+    #[test]
+    fn append_only_p0403_strips_internal_table_names() {
+        let (status, code, msg, _) = map_p0403_error(
+            "APPEND_ONLY_VIOLATION: table public.stock_ledger is immutable and does not allow DELETE",
+            None,
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(code, "APPEND_ONLY_VIOLATION");
+        assert!(!msg.contains("stock_ledger"));
+        assert!(!msg.contains("public."));
     }
 }

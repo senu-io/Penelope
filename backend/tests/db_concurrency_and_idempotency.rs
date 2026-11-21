@@ -7,14 +7,11 @@ use sqlx::Row;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn concurrent_idempotency_and_concurrent_dispatch_races_are_serialized() {
+async fn concurrent_identical_idempotency_key_returns_single_entry() {
     let (_owner_pool, app_pool) = setup_pools().await;
     let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
     let (product_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
 
-    // concurrent identical idempotency_key retries under READ COMMITTED:
-    // both tasks submit the exact same movement (+15 ea @ 10.000000 EUR) with the same idempotency_key.
-    // exactly 1 ledger entry must be created, product balance must be 15.0000 (not 30.0000), and both calls return the same ledger id.
     let shared_idem_key = Uuid::new_v4();
     let pool_a = app_pool.clone();
     let pool_b = app_pool.clone();
@@ -50,14 +47,33 @@ async fn concurrent_idempotency_and_concurrent_dispatch_races_are_serialized() {
     assert_eq!(res_a.get::<Uuid, _>("id"), res_b.get::<Uuid, _>("id"));
     assert_eq!(res_a.get::<Decimal, _>("new_qty"), dec("15.0000"));
     assert_eq!(res_b.get::<Decimal, _>("new_qty"), dec("15.0000"));
+}
 
-    // reusing the same idempotency_key with a different delta or reason must fail with SQLSTATE P0409
+#[tokio::test]
+async fn idempotency_key_payload_mismatch_fails_p0409() {
+    let (_owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
+    let (product_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
+
+    let shared_idem_key = Uuid::new_v4();
+    sqlx::query(
+        "SELECT id FROM public.record_stock_movement($1, $2, 'receive', $3, $4, 'PO-IDEM', 'initial stock', $5, NULL, 'op@test', '127.0.0.1')",
+    )
+    .bind(shared_idem_key)
+    .bind(product_id)
+    .bind(dec("15.0000"))
+    .bind(dec("10.000000"))
+    .bind(user_id)
+    .fetch_one(&app_pool)
+    .await
+    .expect("first idempotent receive");
+
     let mismatch_err = sqlx::query(
         "SELECT id FROM public.record_stock_movement($1, $2, 'receive', $3, $4, 'PO-IDEM', 'initial stock', $5, NULL, 'op@test', '127.0.0.1')",
     )
     .bind(shared_idem_key)
     .bind(product_id)
-    .bind(dec("20.0000")) // different delta!
+    .bind(dec("20.0000"))
     .bind(dec("10.000000"))
     .bind(user_id)
     .fetch_one(&app_pool)
@@ -66,9 +82,27 @@ async fn concurrent_idempotency_and_concurrent_dispatch_races_are_serialized() {
 
     let db_err = mismatch_err.as_database_error().expect("database error");
     assert_eq!(db_err.code().as_deref(), Some("P0409"));
+}
 
-    // concurrent dispatch race: 15 units on hand, two concurrent transactions each try to dispatch -10.0000.
-    // one must commit (leaving 5.0000 on hand) and the other must fail with P0422 (INSUFFICIENT_STOCK).
+#[tokio::test]
+async fn concurrent_dispatches_cannot_overdraw_stock() {
+    let (_owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
+    let (product_id, _) = insert_test_product(&app_pool, cat_id, "ea", false).await;
+
+    sqlx::query(
+        "SELECT id FROM public.record_stock_movement($1, $2, 'receive', $3, $4, 'PO-SEED', 'seed stock', $5, NULL, 'op@test', '127.0.0.1')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(product_id)
+    .bind(dec("15.0000"))
+    .bind(dec("10.000000"))
+    .bind(user_id)
+    .fetch_one(&app_pool)
+    .await
+    .expect("seed 15 units");
+
+    // two concurrent dispatches of 10 from 15 on hand -> only one can succeed
     let pool_d1 = app_pool.clone();
     let pool_d2 = app_pool.clone();
 

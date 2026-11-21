@@ -1,4 +1,4 @@
-// postgres role separation, least privilege, and function boundary tests
+// postgres role separation, least privilege, and actor scope boundary tests
 
 mod common;
 use common::*;
@@ -7,12 +7,9 @@ use sqlx::Row;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn role_separation_and_privilege_boundaries_hold() {
-    let (owner_pool, app_pool) = setup_pools().await;
-    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
-    let (product_id, _sku) = insert_test_product(&app_pool, cat_id, "ea", false).await;
+async fn roles_are_non_superuser_and_schema_locked() {
+    let (owner_pool, _app_pool) = setup_pools().await;
 
-    // verify neither penelope_owner nor penelope_app is a superuser
     let roles_row = sqlx::query(
         r#"
         SELECT
@@ -55,6 +52,13 @@ async fn role_separation_and_privilege_boundaries_hold() {
         !roles_row.get::<bool, _>("public_can_exec_audit"),
         "PUBLIC must not have EXECUTE on record_audit_event"
     );
+}
+
+#[tokio::test]
+async fn app_role_cannot_bypass_product_or_ledger_grants() {
+    let (_owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
+    let (product_id, _sku) = insert_test_product(&app_pool, cat_id, "ea", false).await;
 
     // penelope_app cannot insert product with non-zero quantity_on_hand or cost
     let bad_insert = sqlx::query(
@@ -67,7 +71,7 @@ async fn role_separation_and_privilege_boundaries_hold() {
         "#,
     )
     .bind(Uuid::new_v4())
-    .bind(format!("BAD-{}", Uuid::new_v4().simple()))
+    .bind(format!("BAD-{}", Uuid::new_v4().simple()).to_uppercase())
     .bind(cat_id)
     .execute(&app_pool)
     .await;
@@ -76,7 +80,7 @@ async fn role_separation_and_privilege_boundaries_hold() {
         "penelope_app must be denied INSERT on quantity_on_hand / cost columns"
     );
 
-    // penelope_app cannot directly update quantity_on_hand, total_cost_basis_eur, or unit_cost_eur
+    // penelope_app cannot directly update quantity_on_hand or unit_cost_eur
     let bad_update_qty =
         sqlx::query("UPDATE public.products SET quantity_on_hand = 999.0000 WHERE id = $1")
             .bind(product_id)
@@ -131,8 +135,14 @@ async fn role_separation_and_privilege_boundaries_hold() {
         bad_audit_insert.is_err(),
         "penelope_app must be denied direct INSERT on audit_logs"
     );
+}
 
-    // actor attribution & api key scope checks in record_stock_movement and record_audit_event
+#[tokio::test]
+async fn movement_and_audit_enforce_actor_and_api_key_scopes() {
+    let (_owner_pool, app_pool) = setup_pools().await;
+    let (user_id, cat_id) = seed_actor_and_category(&app_pool).await;
+    let (product_id, _sku) = insert_test_product(&app_pool, cat_id, "ea", false).await;
+
     let write_key_id = Uuid::new_v4();
     let read_only_key_id = Uuid::new_v4();
     let revoked_key_id = Uuid::new_v4();
@@ -193,7 +203,7 @@ async fn role_separation_and_privilege_boundaries_hold() {
         .and_then(|e| e.code().map(|c| c.into_owned()));
     assert_eq!(both_present_code.as_deref(), Some("P0422"));
 
-    // api key lacking write scope or revoked must fail with P0403
+    // readonly and revoked api keys must fail with P0403
     let read_only_attempt = sqlx::query(
         "SELECT * FROM public.record_stock_movement($1, $2, 'receive', 5.0000, 10.000000, 'PO-RO', 'readonly key', NULL, $3, 'key:ro', '127.0.0.1')",
     )
@@ -222,7 +232,7 @@ async fn role_separation_and_privilege_boundaries_hold() {
         .and_then(|e| e.code().map(|c| c.into_owned()));
     assert_eq!(rev_code.as_deref(), Some("P0403"));
 
-    // active api key with write:stock scope succeeds
+    // active api key with operator role_scope succeeds
     let valid_key_recv = sqlx::query(
         "SELECT actor_user_id, actor_api_key_id, new_qty FROM public.record_stock_movement($1, $2, 'receive', 5.0000, 10.000000, 'PO-KEY', 'valid key receive', NULL, $3, 'key:Scanner Write Key', '127.0.0.1')",
     )
@@ -231,7 +241,7 @@ async fn role_separation_and_privilege_boundaries_hold() {
     .bind(write_key_id)
     .fetch_one(&app_pool)
     .await
-    .expect("active write:stock api key should succeed");
+    .expect("active operator role_scope api key should succeed");
     assert_eq!(valid_key_recv.get::<Option<Uuid>, _>("actor_user_id"), None);
     assert_eq!(
         valid_key_recv.get::<Option<Uuid>, _>("actor_api_key_id"),
@@ -239,7 +249,7 @@ async fn role_separation_and_privilege_boundaries_hold() {
     );
     assert_eq!(valid_key_recv.get::<Decimal, _>("new_qty"), dec("5.0000"));
 
-    // record_audit_event rejects both-present actors and rejects missing actor on authenticated actions
+    // record_audit_event rejects both-present actors and null actors on authenticated actions
     let both_present_audit = sqlx::query(
         "SELECT * FROM public.record_audit_event($1, $2, 'both@test', 'product.create', 'product', 'id1', '127.0.0.1', '{}'::jsonb)",
     )

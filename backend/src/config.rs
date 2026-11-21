@@ -70,6 +70,24 @@ pub enum ConfigError {
 
     #[error("live database role verification failed: {0}")]
     DatabaseRoleVerificationFailed(String),
+
+    #[error("duplicate encryption key id {0} in PENELOPE_ENCRYPTION_KEYS")]
+    DuplicateKeyId(u16),
+
+    #[error("invalid server port: {0} (must be between 1 and 65535)")]
+    InvalidPort(u16),
+
+    #[error("invalid session ttl configuration: {0}")]
+    InvalidTtl(String),
+
+    #[error("invalid rate limit configuration: {0}")]
+    InvalidRateLimit(String),
+
+    #[error("unsupported default currency '{0}' (only EUR is supported)")]
+    UnsupportedCurrency(String),
+
+    #[error("invalid initial admin email '{0}'")]
+    InvalidAdminEmail(String),
 }
 
 // validate database connection url syntax and expected role username
@@ -78,6 +96,9 @@ pub fn validate_db_url_role(
     url: &str,
     expected_role: &str,
 ) -> Result<(), ConfigError> {
+    if is_placeholder_value(url) {
+        return Err(ConfigError::PlaceholderForbidden(var_name.to_string()));
+    }
     let opts = PgConnectOptions::from_str(url)
         .map_err(|_| ConfigError::InvalidDatabaseUrl(var_name.to_string()))?;
     let actual_user = opts.get_username();
@@ -154,6 +175,14 @@ pub fn validate_initial_admin(
         return Err(ConfigError::PlaceholderForbidden(
             "INITIAL_ADMIN_EMAIL".to_string(),
         ));
+    }
+    let email_parts: Vec<&str> = email_trimmed.split('@').collect();
+    if email_trimmed.chars().any(char::is_whitespace)
+        || email_parts.len() != 2
+        || email_parts[0].is_empty()
+        || email_parts[1].is_empty()
+    {
+        return Err(ConfigError::InvalidAdminEmail(email_trimmed.to_string()));
     }
 
     if pw_trimmed.is_empty() {
@@ -239,6 +268,9 @@ impl KeyRing {
                 return Err(ConfigError::ZeroKeyForbidden(id));
             }
 
+            if map.contains_key(&id) {
+                return Err(ConfigError::DuplicateKeyId(id));
+            }
             map.insert(id, Zeroizing::new(raw_bytes));
         }
 
@@ -368,10 +400,8 @@ impl AppConfig {
 
         validate_db_url_role("DATABASE_URL", &database_url, "penelope_app")?;
 
-        // supports both RUN_MIGRATIONS_ON_STARTUP from .sample_env.env and PENELOPE_RUN_MIGRATIONS
         let run_migrations = get_var("RUN_MIGRATIONS_ON_STARTUP")
-            .or_else(|| get_var("PENELOPE_RUN_MIGRATIONS"))
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
             .unwrap_or(false);
 
         let raw_migration_url = get_var("MIGRATION_DATABASE_URL")
@@ -394,29 +424,27 @@ impl AppConfig {
             raw_migration_url
         };
 
-        // supports BACKEND_HOST from .sample_env.env, PENELOPE_HOST, and SERVER_HOST
         let server_host = get_var("BACKEND_HOST")
-            .or_else(|| get_var("PENELOPE_HOST"))
-            .or_else(|| get_var("SERVER_HOST"))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "127.0.0.1".to_string());
 
-        // supports BACKEND_PORT from .sample_env.env, PENELOPE_PORT, and PORT
         let server_port = get_var("BACKEND_PORT")
-            .or_else(|| get_var("PENELOPE_PORT"))
-            .or_else(|| get_var("PORT"))
             .unwrap_or_else(|| "8080".to_string())
+            .trim()
             .parse::<u16>()
-            .map_err(|e| ConfigError::InvalidInt("PORT".to_string(), e))?;
+            .map_err(|e| ConfigError::InvalidInt("BACKEND_PORT".to_string(), e))?;
+        if server_port == 0 {
+            return Err(ConfigError::InvalidPort(server_port));
+        }
 
         let session_secret_raw = get_var("SESSION_SECRET")
             .ok_or_else(|| ConfigError::MissingVar("SESSION_SECRET".to_string()))?;
 
         let session_secret = validate_session_secret(&session_secret_raw)?;
 
-        // supports FRONTEND_ORIGIN from .sample_env.env and CORS_ALLOWED_ORIGINS
-        let cors_raw = get_var("FRONTEND_ORIGIN")
-            .or_else(|| get_var("CORS_ALLOWED_ORIGINS"))
-            .unwrap_or_else(|| "http://localhost:5173,http://127.0.0.1:5173".to_string());
+        let cors_raw =
+            get_var("FRONTEND_ORIGIN").unwrap_or_else(|| "http://localhost:5173".to_string());
         let cors_allowed_origins = cors_raw
             .split(',')
             .map(|s| s.trim().to_string())
@@ -425,6 +453,7 @@ impl AppConfig {
 
         let active_key_id = get_var("PENELOPE_ACTIVE_KEY_ID")
             .ok_or_else(|| ConfigError::MissingVar("PENELOPE_ACTIVE_KEY_ID".to_string()))?
+            .trim()
             .parse::<u16>()
             .map_err(|e| ConfigError::InvalidInt("PENELOPE_ACTIVE_KEY_ID".to_string(), e))?;
 
@@ -433,56 +462,77 @@ impl AppConfig {
 
         let keyring = KeyRing::from_env_str(active_key_id, &raw_keys)?;
 
-        // check first-run admin bootstrap toggle and variables
         let bootstrap_enabled = get_var("BOOTSTRAP_INITIAL_ADMIN")
-            .or_else(|| get_var("PENELOPE_BOOTSTRAP_INITIAL_ADMIN"))
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
             .unwrap_or(false);
 
         let initial_admin = if bootstrap_enabled {
             let email = get_var("INITIAL_ADMIN_EMAIL")
-                .or_else(|| get_var("PENELOPE_INITIAL_ADMIN_EMAIL"))
                 .ok_or_else(|| ConfigError::MissingVar("INITIAL_ADMIN_EMAIL".to_string()))?;
 
             let pw = get_var("INITIAL_ADMIN_PASSWORD")
-                .or_else(|| get_var("PENELOPE_INITIAL_ADMIN_PASSWORD"))
                 .ok_or_else(|| ConfigError::MissingVar("INITIAL_ADMIN_PASSWORD".to_string()))?;
 
-            let full_name = get_var("INITIAL_ADMIN_NAME")
-                .or_else(|| get_var("PENELOPE_INITIAL_ADMIN_NAME"))
-                .unwrap_or_else(|| "System Administrator".to_string());
+            let full_name =
+                get_var("INITIAL_ADMIN_NAME").unwrap_or_else(|| "System Administrator".to_string());
 
             Some(validate_initial_admin(&email, &pw, &full_name)?)
         } else {
             None
         };
 
-        let default_currency_code =
-            get_var("DEFAULT_CURRENCY_CODE").unwrap_or_else(|| "EUR".to_string());
+        let default_currency_code = get_var("DEFAULT_CURRENCY_CODE")
+            .unwrap_or_else(|| "EUR".to_string())
+            .trim()
+            .to_ascii_uppercase();
+        if default_currency_code != "EUR" {
+            return Err(ConfigError::UnsupportedCurrency(default_currency_code));
+        }
 
         let seed_demo_data = get_var("SEED_DEMO_DATA")
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
             .unwrap_or(false);
 
         let session_idle_ttl_hours = get_var("SESSION_IDLE_TTL_HOURS")
             .unwrap_or_else(|| "24".to_string())
+            .trim()
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("SESSION_IDLE_TTL_HOURS".to_string(), e))?;
 
         let session_absolute_ttl_hours = get_var("SESSION_ABSOLUTE_TTL_HOURS")
             .unwrap_or_else(|| "168".to_string())
+            .trim()
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("SESSION_ABSOLUTE_TTL_HOURS".to_string(), e))?;
 
+        if session_idle_ttl_hours == 0 || session_absolute_ttl_hours == 0 {
+            return Err(ConfigError::InvalidTtl(
+                "SESSION_IDLE_TTL_HOURS and SESSION_ABSOLUTE_TTL_HOURS must be > 0".to_string(),
+            ));
+        }
+        if session_idle_ttl_hours > session_absolute_ttl_hours {
+            return Err(ConfigError::InvalidTtl(format!(
+                "SESSION_IDLE_TTL_HOURS ({session_idle_ttl_hours}) cannot exceed SESSION_ABSOLUTE_TTL_HOURS ({session_absolute_ttl_hours})"
+            )));
+        }
+
         let rate_limit_auth_per_min = get_var("RATE_LIMIT_AUTH_PER_MIN")
             .unwrap_or_else(|| "10".to_string())
+            .trim()
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("RATE_LIMIT_AUTH_PER_MIN".to_string(), e))?;
 
         let rate_limit_api_per_min = get_var("RATE_LIMIT_API_PER_MIN")
             .unwrap_or_else(|| "120".to_string())
+            .trim()
             .parse::<u32>()
             .map_err(|e| ConfigError::InvalidInt("RATE_LIMIT_API_PER_MIN".to_string(), e))?;
+
+        if rate_limit_auth_per_min == 0 || rate_limit_api_per_min == 0 {
+            return Err(ConfigError::InvalidRateLimit(
+                "RATE_LIMIT_AUTH_PER_MIN and RATE_LIMIT_API_PER_MIN must be > 0".to_string(),
+            ));
+        }
 
         Ok(Self {
             database_url,
@@ -776,5 +826,94 @@ mod tests {
             }
             other => panic!("expected InvalidDatabaseRole, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_duplicate_key_ids_in_keyring() {
+        let raw = format!("1:{VALID_KEY_1}, 1:{VALID_KEY_2}");
+        let err = KeyRing::from_env_str(1, &raw).unwrap_err();
+        match err {
+            ConfigError::DuplicateKeyId(id) => assert_eq!(id, 1),
+            other => panic!("expected DuplicateKeyId, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_placeholder_db_url_passwords() {
+        let mut app_pairs = sample_env_pairs();
+        app_pairs.push((
+            "DATABASE_URL",
+            "postgres://penelope_app:CHANGE_ME_APP_PASSWORD@localhost:5432/penelope_db".to_string(),
+        ));
+        let err_app = AppConfig::from_pairs(app_pairs).unwrap_err();
+        match err_app {
+            ConfigError::PlaceholderForbidden(var) => assert_eq!(var, "DATABASE_URL"),
+            other => panic!("expected PlaceholderForbidden, got {other:?}"),
+        }
+
+        let mut mig_pairs = sample_env_pairs();
+        mig_pairs.push((
+            "MIGRATION_DATABASE_URL",
+            "postgres://penelope_owner:CHANGE_ME_OWNER_PASSWORD@localhost:5432/penelope_db"
+                .to_string(),
+        ));
+        let err_mig = AppConfig::from_pairs(mig_pairs).unwrap_err();
+        match err_mig {
+            ConfigError::PlaceholderForbidden(var) => assert_eq!(var, "MIGRATION_DATABASE_URL"),
+            other => panic!("expected PlaceholderForbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_zero_port_and_invalid_runtime_bounds() {
+        let mut zero_port = sample_env_pairs();
+        zero_port.push(("BACKEND_PORT", "0".to_string()));
+        assert!(matches!(
+            AppConfig::from_pairs(zero_port).unwrap_err(),
+            ConfigError::InvalidPort(0)
+        ));
+
+        let mut bad_port = sample_env_pairs();
+        bad_port.push(("BACKEND_PORT", "not_a_port".to_string()));
+        match AppConfig::from_pairs(bad_port).unwrap_err() {
+            ConfigError::InvalidInt(var, _) => assert_eq!(var, "BACKEND_PORT"),
+            other => panic!("expected InvalidInt(BACKEND_PORT), got {other:?}"),
+        }
+
+        let mut zero_ttl = sample_env_pairs();
+        zero_ttl.push(("SESSION_IDLE_TTL_HOURS", "0".to_string()));
+        assert!(matches!(
+            AppConfig::from_pairs(zero_ttl).unwrap_err(),
+            ConfigError::InvalidTtl(_)
+        ));
+
+        let mut inverted_ttl = sample_env_pairs();
+        inverted_ttl.push(("SESSION_IDLE_TTL_HOURS", "48".to_string()));
+        inverted_ttl.push(("SESSION_ABSOLUTE_TTL_HOURS", "24".to_string()));
+        assert!(matches!(
+            AppConfig::from_pairs(inverted_ttl).unwrap_err(),
+            ConfigError::InvalidTtl(_)
+        ));
+
+        let mut zero_rate = sample_env_pairs();
+        zero_rate.push(("RATE_LIMIT_AUTH_PER_MIN", "0".to_string()));
+        assert!(matches!(
+            AppConfig::from_pairs(zero_rate).unwrap_err(),
+            ConfigError::InvalidRateLimit(_)
+        ));
+
+        let mut bad_currency = sample_env_pairs();
+        bad_currency.push(("DEFAULT_CURRENCY_CODE", "USD".to_string()));
+        match AppConfig::from_pairs(bad_currency).unwrap_err() {
+            ConfigError::UnsupportedCurrency(cur) => assert_eq!(cur, "USD"),
+            other => panic!("expected UnsupportedCurrency, got {other:?}"),
+        }
+
+        let mut bad_email = sample_env_pairs();
+        bad_email.push(("INITIAL_ADMIN_EMAIL", "not-an-email".to_string()));
+        assert!(matches!(
+            AppConfig::from_pairs(bad_email).unwrap_err(),
+            ConfigError::InvalidAdminEmail(_)
+        ));
     }
 }

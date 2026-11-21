@@ -9,10 +9,10 @@ GRANT USAGE ON SCHEMA public TO penelope_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE penelope_owner
     REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
--- 1. users
+-- users
 CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
-    email TEXT NOT NULL UNIQUE CHECK (pg_catalog.length(pg_catalog.btrim(email)) > 0),
+    email TEXT NOT NULL UNIQUE CHECK (pg_catalog.length(pg_catalog.btrim(email)) > 0 AND email = pg_catalog.lower(pg_catalog.btrim(email))),
     full_name TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(full_name)) > 0),
     password_hash TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(password_hash)) > 0),
     role TEXT NOT NULL CHECK (role IN ('admin', 'manager', 'operator')),
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now()
 );
 
--- 2. sessions
+-- sessions
 CREATE TABLE IF NOT EXISTS public.sessions (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS public.sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON public.sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON public.sessions(expires_at);
 
--- 3. api_keys
+-- api_keys
 CREATE TABLE IF NOT EXISTS public.api_keys (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     name TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(name)) > 0),
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_created_by ON public.api_keys(created_by);
 
--- 4. categories
+-- categories
 CREATE TABLE IF NOT EXISTS public.categories (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     name TEXT NOT NULL UNIQUE CHECK (pg_catalog.length(pg_catalog.btrim(name)) > 0),
@@ -61,10 +61,10 @@ CREATE TABLE IF NOT EXISTS public.categories (
     created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now()
 );
 
--- 5. products
+-- products
 CREATE TABLE IF NOT EXISTS public.products (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
-    sku TEXT NOT NULL UNIQUE CHECK (pg_catalog.length(pg_catalog.btrim(sku)) > 0),
+    sku TEXT NOT NULL UNIQUE CHECK (pg_catalog.length(pg_catalog.btrim(sku)) > 0 AND sku = pg_catalog.upper(pg_catalog.btrim(sku))),
     barcode TEXT NULL UNIQUE CHECK (barcode IS NULL OR pg_catalog.length(pg_catalog.btrim(barcode)) > 0),
     name TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(name)) > 0),
     description TEXT NOT NULL DEFAULT '',
@@ -111,7 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_products_category_id ON public.products(category_
 CREATE INDEX IF NOT EXISTS idx_products_sku ON public.products(sku);
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON public.products(barcode);
 
--- 6. stock_ledger (append-only)
+-- stock_ledger (append-only)
 CREATE TABLE IF NOT EXISTS public.stock_ledger (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     idempotency_key UUID NOT NULL UNIQUE,
@@ -142,31 +142,9 @@ CREATE TABLE IF NOT EXISTS public.stock_ledger (
     )
 );
 
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_catalog.pg_constraint
-        WHERE conname = 'ck_ledger_actor_present'
-          AND conrelid = 'public.stock_ledger'::pg_catalog.regclass
-    ) THEN
-        ALTER TABLE public.stock_ledger DROP CONSTRAINT ck_ledger_actor_present;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_catalog.pg_constraint
-        WHERE conname = 'ck_ledger_single_actor'
-          AND conrelid = 'public.stock_ledger'::pg_catalog.regclass
-    ) THEN
-        ALTER TABLE public.stock_ledger
-            ADD CONSTRAINT ck_ledger_single_actor
-            CHECK (pg_catalog.num_nonnulls(actor_user_id, actor_api_key_id) = 1);
-    END IF;
-END
-$$;
-
 CREATE INDEX IF NOT EXISTS idx_stock_ledger_product_created ON public.stock_ledger(product_id, created_at DESC);
 
--- 7. audit_logs (append-only)
+-- audit_logs (append-only)
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     actor_user_id UUID NULL REFERENCES public.users(id) ON DELETE RESTRICT,
@@ -182,20 +160,6 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
         pg_catalog.num_nonnulls(actor_user_id, actor_api_key_id) <= 1
     )
 );
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_catalog.pg_constraint
-        WHERE conname = 'ck_audit_logs_at_most_one_actor'
-          AND conrelid = 'public.audit_logs'::pg_catalog.regclass
-    ) THEN
-        ALTER TABLE public.audit_logs
-            ADD CONSTRAINT ck_audit_logs_at_most_one_actor
-            CHECK (pg_catalog.num_nonnulls(actor_user_id, actor_api_key_id) <= 1);
-    END IF;
-END
-$$;
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON public.audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON public.audit_logs(entity_type, entity_id);
@@ -716,7 +680,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 1. update product balance and cost basis
+    -- update product balance and cost basis
     UPDATE public.products
     SET quantity_on_hand = v_new_qty,
         total_cost_basis_eur = v_new_total_cost,
@@ -724,7 +688,7 @@ BEGIN
         updated_at = pg_catalog.now()
     WHERE id = p_product_id;
 
-    -- 2. insert immutable ledger row
+    -- insert immutable ledger row
     INSERT INTO public.stock_ledger (
         idempotency_key,
         request_hash,
@@ -759,7 +723,7 @@ BEGIN
     )
     RETURNING * INTO v_inserted;
 
-    -- 3. insert matching security audit record in the same transaction
+    -- insert matching security audit record in the same transaction
     INSERT INTO public.audit_logs (
         actor_user_id,
         actor_api_key_id,
