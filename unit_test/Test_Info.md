@@ -4,21 +4,20 @@ Test runner, modular integration targets, and fixtures for Penelope.
 
 ## Directory Layout
 
-- `scripts/`: Test runner scripts (`run_tests.ps1`).
-- `fixtures/`: Shared test datasets (CSV and JSON files).
-- `generated/`: Local test output files and generated artifacts.
-- `reports/`: Timestamped markdown and JSON test run reports (gitignored).
-- `.private_tests/`: Gitignored private integration test vault and local security checks.
+- `scripts/`: PowerShell test runner (`run_tests.ps1`).
+- `fixtures/`: Shared CSV and JSON test datasets.
+- `generated/`: Local output files created by tests.
+- `reports/`: Timestamped markdown and JSON test reports (gitignored).
 
 ## Running Tests
 
-Run the PowerShell test script from the repo root:
+Run the test runner from the repository root:
 
 ```powershell
-# run all backend checks (format, clippy, unit, and all db tests)
+# run all backend checks (format, clippy, unit, and database tests)
 .\unit_test\scripts\run_tests.ps1 -Suite backend
 
-# run only unit tests
+# run unit tests only
 .\unit_test\scripts\run_tests.ps1 -Suite backend -Target unit
 
 # run specific database integration targets
@@ -29,24 +28,21 @@ Run the PowerShell test script from the repo root:
 # run frontend tests
 .\unit_test\scripts\run_tests.ps1 -Suite frontend
 
-# run full public suite
+# run full suite
 .\unit_test\scripts\run_tests.ps1 -Suite full
-
-# run with private checks (isolated integration tests, ai checks, security audit)
-.\unit_test\scripts\run_tests.ps1 -Suite backend -Private
 ```
 
-## Modular Integration Targets
+## Integration Test Targets
 
-Integration tests live in `backend/tests/`:
-- `tests/common/`: Shared database connection pools, actor seeding, and decimal helpers.
-- `tests/db_role_boundaries.rs`: Role permissions, table grants, and column-level restrictions.
-- `tests/db_concurrency_and_idempotency.rs`: Concurrent idempotency replay and dispatch serialization.
-- `tests/db_mwa_and_append_only.rs`: 6-decimal MWA arithmetic, cycle-count valuation, and append-only triggers.
+Database integration tests live in `backend/tests/`:
+
+- `tests/common/`: Pool setup (reads `DATABASE_URL` and `MIGRATION_DATABASE_URL` from `.env`), actor seeding, and decimal helpers.
+- `tests/db_role_boundaries.rs`: Role isolation, schema privileges, and table/column grants.
+- `tests/db_concurrency_and_idempotency.rs`: Concurrent idempotency replay (`P0409`) and dispatch row locking.
+- `tests/db_mwa_and_append_only.rs`: Fractional unit rules, 6-decimal MWA arithmetic, cycle-count valuation, and append-only triggers.
 
 ## Notes
 
-- Supported `-Target` values for `-Suite backend`: `unit`, `role_boundaries` (`roles`), `db`, `concurrency` (`idempotency`), and `mwa` (`ledger`, `append_only`). Passing an unknown target or combining `-Target` with `-Private` or `-Suite frontend` fails immediately.
-- Reports get saved to `unit_test/reports/` (or `unit_test/.private_tests/reports/` for private runs). Both folders are gitignored.
-- If a runner finishes with 0 tests executed, the script treats it as a failure.
-- When running with `-Private`, temporary private test files are cleaned up automatically after the run.
+- Supported `-Target` values (requires `-Suite backend`): `unit`, `role_boundaries` (`roles`), `db`, `concurrency` (`idempotency`), and `mwa` (`ledger`, `append_only`).
+- Test reports are written to `unit_test/reports/` and ignored by Git.
+- Any test target exiting with zero executed tests fails automatically.

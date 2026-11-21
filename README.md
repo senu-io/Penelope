@@ -12,62 +12,68 @@
 
 ---
 
-> [!NOTE]
-> **Project Status:** Penelope is currently in active development. Progress is tracked in [TODO.md](TODO.md).
+Penelope is a self-hosted warehouse inventory management system backed by Rust (`Axum` + `SQLx`), PostgreSQL 16, and a planned React 18 web client. Progress and open tasks are tracked in [TODO.md](TODO.md).
 
-Penelope is a self-hosted warehouse inventory management system designed around a Rust (`Axum` + `SQLx`) backend, a PostgreSQL 16 relational ledger, and a React 18 web interface.
+## Features (Planned & In Progress)
 
-## Planned Capabilities
-
-- **Catalog and SKU Control:** Track SKUs, barcodes, categories, base units of measure (`ea`, `box`, `pallet`, `kg`, `l`, `m`), fixed-point `NUMERIC(14, 4)` quantities, bin coordinates, reorder thresholds, and Moving Weighted Average (MWA) `EUR` cost tracking (`total_cost_basis_eur NUMERIC(28, 6)` and `unit_cost_eur NUMERIC(18, 6)`).
-- **Transactional Stock Ledger:** Execute every stock change (`Receive`, `Dispatch`, `Cycle Count`, `Damage`) idempotently through a locked PostgreSQL transaction that atomically updates the product balance and cost basis, records an append-only ledger entry, and writes a security audit event.
-- **Operational Overview:** Monitor total inventory valuation, low-stock items below their reorder threshold, and recent stock movements from a single screen.
-- **Data Exchange (`data_io`):** Import and export catalog records, ledger history, and audit trails in RFC 4180 CSV and JSON formats.
-- **Barcode and Label Workflow:** Fast keyboard-wedge barcode lookup paired with printable Code-128 and QR bin labels.
-- **Security and Access Control:** Argon2id password hashing, HttpOnly session cookies with CSRF protection, role-based access control (`Admin`, `Manager`, `Operator`), 256-bit SHA-256 scoped API keys, three-tier PostgreSQL role separation (`postgres` bootstrap superuser, non-superuser `penelope_owner` schema owner, and least-privilege `penelope_app` runtime role), and versioned AES-256-GCM field encryption with contextual AAD for confidential product notes.
+- Product and SKU catalog supporting barcodes, categories, units of measure (`ea`, `box`, `pallet`, `kg`, `l`, `m`), bin locations, reorder thresholds, and Moving Weighted Average (MWA) EUR cost tracking (`total_cost_basis_eur` + `unit_cost_eur`).
+- Idempotent, locked stock movements (`receive`, `dispatch`, `cycle_count`, `damage`) written through append-only ledger and audit triggers in PostgreSQL.
+- Role-based access control (`admin`, `manager`, `operator`) backed by Argon2id password hashing, HttpOnly sessions with CSRF checks, SHA-256 scoped API keys, and versioned AES-256-GCM field encryption for private product notes.
+- Three-tier PostgreSQL privilege separation (`postgres` bootstrap superuser, non-superuser `penelope_owner` migration role, and least-privilege `penelope_app` runtime role).
+- CSV/JSON bulk import and export (`data_io`), low-stock overview reporting, and printable Code-128/QR SKU labels.
 
 ## Technology Stack
 
 | Layer | Technology |
 | :--- | :--- |
-| **Backend** | Rust, Axum, Tokio, SQLx, Tower, Rust Decimal |
-| **Database** | PostgreSQL 16 |
-| **Cryptography** | Argon2id, Versioned AES-256-GCM + AAD, SHA-256 |
-| **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, TanStack Table & Query |
+| Backend | Rust, Axum, Tokio, SQLx, Tower, Rust Decimal |
+| Database | PostgreSQL 16 |
+| Cryptography | Argon2id, Versioned AES-256-GCM + AAD, SHA-256 |
+| Frontend | React 18, Vite, TypeScript, Tailwind CSS, TanStack Table & Query |
 
 ## Repository Structure
 
 ```text
 .
-├── assets/                 # Fonts, icons, schematics, and brand logos
-├── backend/                # Rust (Axum + SQLx) crate scaffold and Docker DB init script
-├── frontend/               # React + Vite + TypeScript web client (planned)
-├── unit_test/              # Public unit test scripts, fixtures, and local reports
+├── assets/                 # Project logos
+├── backend/                # Rust backend (Axum, SQLx migrations, integration tests)
+├── frontend/               # Web assets and planned React + Vite client
+├── unit_test/              # Test runner script and fixtures
 ├── .sample_env.env         # Environment configuration template
-├── docker-compose.yml      # PostgreSQL 16 container stack
-├── TODO.md                 # Modular development checklist and commit log
-├── THIRD_PARTY_NOTICES.md  # Licenses and attributions for bundled assets
+├── docker-compose.yml      # PostgreSQL 16 service
+├── TODO.md                 # Task checklist and commit history
+├── THIRD_PARTY_NOTICES.md  # Licenses for bundled fonts and icons
 └── LICENSE                 # Apache License 2.0
 ```
 
-## Configuration
+## Quick Start
 
-Copy `.sample_env.env` to `.env` before starting the backend or container stack:
+Copy `.sample_env.env` to `.env`, replace the `CHANGE_ME_*` secrets, and start PostgreSQL:
 
-```bash
+```powershell
 cp .sample_env.env .env
+docker compose up -d
 ```
 
-Configure the following in `.env`:
-- `POSTGRES_USER` and `POSTGRES_PASSWORD`: Bootstrap superuser (`postgres`) used by the PostgreSQL container entrypoint on first volume initialization (`backend/docker/init-db.sh`). Note that `/docker-entrypoint-initdb.d/` scripts run only when the `penelope_postgres_data` volume is initially empty; run `docker compose down -v && docker compose up -d` if re-initializing roles.
-- `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, and `MIGRATION_DATABASE_URL`: Non-superuser schema owner connection (`penelope_owner`) used only for running database migrations (required when `RUN_MIGRATIONS_ON_STARTUP=true` and must not equal `DATABASE_URL`).
-- `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD`, and `DATABASE_URL`: Least-privilege runtime connection (`penelope_app`) used by the Axum server.
-- `SESSION_SECRET`: 256-bit (64-character hex) session signing secret generated via `openssl rand -hex 32` (placeholder, non-hex, and all-zero values are rejected at startup).
-- `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned 256-bit (64-character hex) keyring for `AES-256-GCM` field encryption. Generate a real key via `openssl rand -hex 32` (missing, malformed, or all-zero keys are rejected at startup).
-- `BOOTSTRAP_INITIAL_ADMIN`, `INITIAL_ADMIN_EMAIL`, and `INITIAL_ADMIN_PASSWORD`: Optional first-run administrator bootstrap (enforces a minimum 12-character password and rejects placeholder values when enabled).
+Run backend formatting, clippy, unit tests, and database integration tests:
 
-Never commit `.env` files to version control.
+```powershell
+.\unit_test\scripts\run_tests.ps1 -Suite backend
+```
+
+For individual test targets, see [unit_test/Test_Info.md](unit_test/Test_Info.md).
+
+## Configuration
+
+Set these values in `.env` (never commit `.env` to Git):
+
+- `POSTGRES_USER` and `POSTGRES_PASSWORD`: Bootstrap superuser (`postgres`) used by `backend/docker/init-db.sh` only when the PostgreSQL volume is empty. Re-create the volume with `docker compose down -v && docker compose up -d` if role settings change.
+- `POSTGRES_OWNER_USER`, `POSTGRES_OWNER_PASSWORD`, and `MIGRATION_DATABASE_URL`: Non-superuser schema owner (`penelope_owner`) used for migrations (required when `RUN_MIGRATIONS_ON_STARTUP=true` and rejected if equal to `DATABASE_URL`).
+- `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD`, and `DATABASE_URL`: Least-privilege runtime connection (`penelope_app`) used by the backend.
+- `SESSION_SECRET`: 256-bit (64-character hex) secret generated via `openssl rand -hex 32` (placeholders, non-hex, and all-zero values are rejected).
+- `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned `<id>:<64_hex_chars>` keyring for `AES-256-GCM` field encryption.
+- `BOOTSTRAP_INITIAL_ADMIN`, `INITIAL_ADMIN_EMAIL`, and `INITIAL_ADMIN_PASSWORD`: Optional first-run admin bootstrap (enforces a minimum 12-character password and valid email when enabled).
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE). Third-party font and icon notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Licensed under the [Apache License, Version 2.0](LICENSE). Third-party font and icon licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
