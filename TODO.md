@@ -17,7 +17,7 @@ Tasks are checked off only after implementation and tests pass.
 - [x] Initialize Rust crate (`backend/Cargo.toml` and `backend/Cargo.lock`) with exact dependency pins
 - [x] Write `0001_initial_schema.sql` with schema lock-down, MWA cost columns (`total_cost_basis_eur`, `unit_cost_eur`), column-restricted `products` grants, `SELECT`-only ledger/audit grants, `SECURITY DEFINER` ledger & audit functions (`P0409` idempotency check, `(entity_type, action)` whitelist), and append-only triggers
 - [x] Implement `config.rs` (`AppConfig::from_pairs`/`from_lookup`, distinct `MIGRATION_DATABASE_URL`, role verification, 64-char hex `SESSION_SECRET`, multi-key `KeyRing`, initial admin password check) and `error.rs` (`AppError` JSON responses)
-- [ ] Implement `crypto.rs` (`Argon2id` password hashing, versioned `AES-256-GCM` field encryption with header/contextual AAD, `pen_live_<64_hex>` API keys & `SHA-256` session tokens)
+- [x] Implement `crypto.rs` (`Argon2id` password hashing, versioned `AES-256-GCM` field encryption with header/contextual AAD, `pen_live_<64_hex>` API keys & `SHA-256` session tokens)
 - [ ] Implement separated `*Record` and `*Response` models with normalized `Decimal` validation, `AppState`, and `/api/v1/health/live` + `/api/v1/health/ready`
 - [ ] Pass `cargo fmt --check`, `cargo clippy -- -D warnings`, crypto unit tests, and PostgreSQL integration tests (`db_role_boundaries`, `db_concurrency_and_idempotency`, `db_mwa_and_append_only`)
 
@@ -77,3 +77,5 @@ Tasks are checked off only after implementation and tests pass.
 | `8e5612e` | 2026-11-06 | `fix(config): require distinct MIGRATION_DATABASE_URL when startup migrations are enabled` |
 | `122421c` | 2026-11-06 | `docs: sync TODO commit log, README config docs, and Test_Info target notes` |
 | `34c7da3` | 2026-11-09 | `fix(config,test): enforce db role principals and verify mig_pool identity` |
+| `1bc94a9` | 2026-11-21 | `fix(backend): tighten config checks, split db tests, and clean up schema` |
+| `6f4b7f0` | 2026-11-21 | `chore: drop duplicate assets and update docs` |

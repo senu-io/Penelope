@@ -1,4 +1,5 @@
 pub mod config;
+pub mod crypto;
 pub mod error;
 
 pub use config::{AppConfig, KeyRing};
