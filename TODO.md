@@ -18,8 +18,8 @@ Tasks are checked off only after implementation and tests pass.
 - [x] Write `0001_initial_schema.sql` with schema lock-down, MWA cost columns (`total_cost_basis_eur`, `unit_cost_eur`), column-restricted `products` grants, `SELECT`-only ledger/audit grants, `SECURITY DEFINER` ledger & audit functions (`P0409` idempotency check, `(entity_type, action)` whitelist), and append-only triggers
 - [x] Implement `config.rs` (`AppConfig::from_pairs`/`from_lookup`, distinct `MIGRATION_DATABASE_URL`, role verification, 64-char hex `SESSION_SECRET`, multi-key `KeyRing`, initial admin password check) and `error.rs` (`AppError` JSON responses)
 - [x] Implement `crypto.rs` (`Argon2id` password hashing, versioned `AES-256-GCM` field encryption with header/contextual AAD, `pen_live_<64_hex>` API keys & `SHA-256` session tokens)
-- [ ] Implement separated `*Record` and `*Response` models with normalized `Decimal` validation, `AppState`, and `/api/v1/health/live` + `/api/v1/health/ready`
-- [ ] Pass `cargo fmt --check`, `cargo clippy -- -D warnings`, crypto unit tests, and PostgreSQL integration tests (`db_role_boundaries`, `db_concurrency_and_idempotency`, `db_mwa_and_append_only`)
+- [x] Implement separated `*Record` and `*Response` models with normalized `Decimal` validation, `AppState`, and `/api/v1/health/live` + `/api/v1/health/ready`
+- [x] Pass `cargo fmt --check`, `cargo clippy -- -D warnings`, crypto unit tests, and PostgreSQL integration tests (`db_role_boundaries`, `db_concurrency_and_idempotency`, `db_mwa_and_append_only`, `http_health`)
 
 ## Module 2: Authentication, RBAC Guards, Scoped API Keys & Audit Service
 - [ ] Implement `guards/` (HttpOnly session cookie extractor, CSRF checks, `X-API-Key` extractor, `Admin`/`Manager`/`Operator` guards, rate limiting, security headers)
@@ -79,3 +79,4 @@ Tasks are checked off only after implementation and tests pass.
 | `34c7da3` | 2026-11-09 | `fix(config,test): enforce db role principals and verify mig_pool identity` |
 | `1bc94a9` | 2026-11-21 | `fix(backend): tighten config checks, split db tests, and clean up schema` |
 | `6f4b7f0` | 2026-11-21 | `chore: drop duplicate assets and update docs` |
+| `53b4443` | 2026-11-24 | `feat(backend): add crypto helpers for argon2id, aes-gcm, and api keys` |

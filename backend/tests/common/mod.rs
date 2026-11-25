@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 static MIGRATION_ONCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
+#[allow(dead_code)]
 pub fn dec(val: &str) -> Decimal {
     Decimal::from_str(val).expect("valid decimal literal")
 }
@@ -80,6 +81,7 @@ pub async fn setup_pools() -> (PgPool, PgPool) {
     (owner_pool, app_pool)
 }
 
+#[allow(dead_code)]
 pub async fn seed_actor_and_category(app_pool: &PgPool) -> (Uuid, Uuid) {
     let user_id = Uuid::new_v4();
     let email = format!("op_{}@penelope.local", Uuid::new_v4().simple());
@@ -111,6 +113,7 @@ pub async fn seed_actor_and_category(app_pool: &PgPool) -> (Uuid, Uuid) {
     (user_id, cat_id)
 }
 
+#[allow(dead_code)]
 pub async fn insert_test_product(
     app_pool: &PgPool,
     category_id: Uuid,

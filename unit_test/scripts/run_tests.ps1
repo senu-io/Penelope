@@ -1,7 +1,7 @@
 param(
     [ValidateSet("backend", "frontend", "full")]
     [string]$Suite = "full",
-    [ValidateSet("", "unit", "role_boundaries", "roles", "db", "concurrency", "idempotency", "mwa", "ledger", "append_only")]
+    [ValidateSet("", "unit", "role_boundaries", "roles", "db", "concurrency", "idempotency", "mwa", "ledger", "append_only", "health", "http")]
     [string]$Target = "",
     [switch]$Private,
     [string]$RepoRootOverride = ""
@@ -186,6 +186,13 @@ if ($Suite -in @("backend", "full")) {
                 Invoke-TestRunnerStep -Name "Rust Integration: MWA Costing & Append-Only Triggers (--test db_mwa_and_append_only)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
                     Push-Location -LiteralPath (Join-Path $repoRoot "backend")
                     cargo test --test db_mwa_and_append_only -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("health", "http")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: HTTP Health Routes (--test http_health)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test http_health -- --nocapture
                     Pop-Location
                 }
             }
