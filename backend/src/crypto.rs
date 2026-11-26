@@ -52,6 +52,9 @@ pub enum CryptoError {
 
     #[error("invalid session token format (expected 64 lowercase hex characters)")]
     InvalidSessionTokenFormat,
+
+    #[error("invalid session secret (expected 64 non-zero hex characters)")]
+    InvalidSessionSecret,
 }
 
 fn argon2_instance() -> Argon2<'static> {
@@ -196,26 +199,79 @@ pub fn hash_api_key(raw_key: &str) -> Result<String, CryptoError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-// generate session token: (64_hex_chars, sha256_hash_hex)
-pub fn generate_session_token() -> (String, String) {
+// rfc 2104 hmac-sha256 using sha2::Sha256 and zeroized pad buffers
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    let mut key_block = Zeroizing::new([0u8; 64]);
+    if key.len() > 64 {
+        let digest = Sha256::digest(key);
+        key_block[..32].copy_from_slice(&digest);
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut ipad = Zeroizing::new([0x36u8; 64]);
+    let mut opad = Zeroizing::new([0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= key_block[i];
+        opad[i] ^= key_block[i];
+    }
+
+    let mut inner = Sha256::new();
+    inner.update(*ipad);
+    inner.update(msg);
+    let inner_digest = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(*opad);
+    outer.update(inner_digest);
+    let outer_digest = outer.finalize();
+
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&outer_digest);
+    out
+}
+
+fn decode_session_secret(
+    session_secret: &SecretString,
+) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    let trimmed = session_secret.expose_secret().trim();
+    if trimmed.len() != 64 {
+        return Err(CryptoError::InvalidSessionSecret);
+    }
+    let mut raw = Zeroizing::new([0u8; 32]);
+    hex::decode_to_slice(trimmed, &mut *raw).map_err(|_| CryptoError::InvalidSessionSecret)?;
+    if raw.iter().all(|&b| b == 0) {
+        return Err(CryptoError::InvalidSessionSecret);
+    }
+    Ok(raw)
+}
+
+// generate session token and its keyed hmac-sha256 digest: (64_hex_chars, 64_hex_digest)
+pub fn generate_session_token(
+    session_secret: &SecretString,
+) -> Result<(String, String), CryptoError> {
     let mut token_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut token_bytes);
     let raw_token = hex::encode(token_bytes);
-    let token_hash =
-        hash_session_token(&raw_token).expect("generated session token is always valid");
+    let token_hash = hash_session_token(&raw_token, session_secret)?;
 
-    (raw_token, token_hash)
+    Ok((raw_token, token_hash))
 }
 
-// validate session token format and hash with sha-256 for lookup
-pub fn hash_session_token(raw_token: &str) -> Result<String, CryptoError> {
+// validate session token format and compute keyed hmac-sha256 digest for db lookup
+pub fn hash_session_token(
+    raw_token: &str,
+    session_secret: &SecretString,
+) -> Result<String, CryptoError> {
     if raw_token.len() != 64 || !is_lowercase_hex(raw_token) {
         return Err(CryptoError::InvalidSessionTokenFormat);
     }
 
-    let mut hasher = Sha256::new();
-    hasher.update(raw_token.as_bytes());
-    Ok(hex::encode(hasher.finalize()))
+    let secret_bytes = decode_session_secret(session_secret)?;
+    Ok(hex::encode(hmac_sha256(
+        &*secret_bytes,
+        raw_token.as_bytes(),
+    )))
 }
 
 #[cfg(test)]
@@ -357,26 +413,63 @@ mod tests {
 
     #[test]
     fn session_token_generation_and_hashing() {
-        let (raw_token, token_hash) = generate_session_token();
+        let secret_a = SecretString::new(KEY_1.to_string());
+        let secret_b = SecretString::new(KEY_2.to_string());
+
+        let (raw_token, token_hash) =
+            generate_session_token(&secret_a).expect("generate session token");
         assert_eq!(raw_token.len(), 64);
         assert_eq!(token_hash.len(), 64);
 
-        let recomputed_hash = hash_session_token(&raw_token).expect("valid session token");
+        let recomputed_hash =
+            hash_session_token(&raw_token, &secret_a).expect("valid session token");
         assert_eq!(recomputed_hash, token_hash);
+
+        let other_secret_hash = hash_session_token(&raw_token, &secret_b)
+            .expect("different secret produces different hash");
+        assert_ne!(other_secret_hash, token_hash);
 
         // reject empty, short, non-hex, and uppercase session tokens
         assert!(matches!(
-            hash_session_token("").unwrap_err(),
+            hash_session_token("", &secret_a).unwrap_err(),
             CryptoError::InvalidSessionTokenFormat
         ));
         assert!(matches!(
-            hash_session_token("too_short").unwrap_err(),
+            hash_session_token("too_short", &secret_a).unwrap_err(),
             CryptoError::InvalidSessionTokenFormat
         ));
         assert!(matches!(
-            hash_session_token(&raw_token.to_ascii_uppercase()).unwrap_err(),
+            hash_session_token(&raw_token.to_ascii_uppercase(), &secret_a).unwrap_err(),
             CryptoError::InvalidSessionTokenFormat
         ));
+
+        // reject zero or malformed session secrets
+        let zero_secret = SecretString::new("0".repeat(64));
+        assert!(matches!(
+            hash_session_token(&raw_token, &zero_secret).unwrap_err(),
+            CryptoError::InvalidSessionSecret
+        ));
+        let short_secret = SecretString::new("abcd".to_string());
+        assert!(matches!(
+            generate_session_token(&short_secret).unwrap_err(),
+            CryptoError::InvalidSessionSecret
+        ));
+    }
+
+    #[test]
+    fn hmac_sha256_matches_rfc_4231_vectors() {
+        let key1 = [0x0bu8; 20];
+        let mac1 = hex::encode(hmac_sha256(&key1, b"Hi There"));
+        assert_eq!(
+            mac1,
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+
+        let mac2 = hex::encode(hmac_sha256(b"Jefe", b"what do ya want for nothing?"));
+        assert_eq!(
+            mac2,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
     }
 
     #[test]

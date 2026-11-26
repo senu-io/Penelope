@@ -22,8 +22,8 @@ Tasks are checked off only after implementation and tests pass.
 - [x] Pass `cargo fmt --check`, `cargo clippy -- -D warnings`, crypto unit tests, and PostgreSQL integration tests (`db_role_boundaries`, `db_concurrency_and_idempotency`, `db_mwa_and_append_only`, `http_health`)
 
 ## Module 2: Authentication, RBAC Guards, Scoped API Keys & Audit Service
-- [ ] Implement `guards/` (HttpOnly session cookie extractor, CSRF checks, `X-API-Key` extractor, `Admin`/`Manager`/`Operator` guards, rate limiting, security headers)
-- [ ] Implement initial admin bootstrap and `services/audit.rs` calling `public.record_audit_event` transactionally
+- [x] Implement `guards/` (HttpOnly session cookie extractor, CSRF checks, `X-API-Key` extractor, `Admin`/`Manager`/`Operator` guards, rate limiting, security headers)
+- [x] Implement initial admin bootstrap and `services/audit.rs` calling `public.record_audit_event` transactionally
 - [ ] Implement `/api/v1/auth/*` (`/login`, `/logout`, `/me`) and `/api/v1/admin/*` (users and API keys)
 - [ ] Pass Module 2 unit and PostgreSQL security boundary integration tests
 
@@ -80,3 +80,4 @@ Tasks are checked off only after implementation and tests pass.
 | `1bc94a9` | 2026-11-21 | `fix(backend): tighten config checks, split db tests, and clean up schema` |
 | `6f4b7f0` | 2026-11-21 | `chore: drop duplicate assets and update docs` |
 | `53b4443` | 2026-11-24 | `feat(backend): add crypto helpers for argon2id, aes-gcm, and api keys` |
+| `4122157` | 2026-11-25 | `feat(backend): add domain models, app state, and health endpoints` |

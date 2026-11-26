@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Serialize;
+use std::time::Duration;
 
 #[derive(Debug, Serialize)]
 pub struct LiveResponse {
@@ -30,19 +31,31 @@ pub async fn live() -> (StatusCode, Json<LiveResponse>) {
 }
 
 pub async fn ready(State(state): State<AppState>) -> impl IntoResponse {
-    match sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(&state.db)
-        .await
+    match tokio::time::timeout(
+        Duration::from_secs(3),
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.db),
+    )
+    .await
     {
-        Ok(_) => (
+        Ok(Ok(_)) => (
             StatusCode::OK,
             Json(ReadyResponse {
                 status: "ready",
                 database: "ok",
             }),
         ),
-        Err(err) => {
+        Ok(Err(err)) => {
             tracing::warn!("readiness database check failed: {}", err);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ReadyResponse {
+                    status: "unavailable",
+                    database: "error",
+                }),
+            )
+        }
+        Err(_) => {
+            tracing::warn!("readiness database check timed out");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ReadyResponse {

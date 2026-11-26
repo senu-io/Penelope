@@ -1,6 +1,6 @@
 // standardized error envelope and status code mappings
 
-use axum::http::header::{HeaderValue, CONTENT_TYPE};
+use axum::http::header::{HeaderValue, CONTENT_TYPE, RETRY_AFTER};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,9 @@ pub struct ErrorEnvelope {
 
 #[derive(Debug, Error)]
 pub enum AppError {
+    #[error("bad request [{code}]: {message}")]
+    BadRequest { code: String, message: String },
+
     #[error("validation error [{code}]: {message}")]
     Validation {
         code: String,
@@ -51,6 +54,12 @@ pub enum AppError {
     #[error("not found [{code}]: {message}")]
     NotFound { code: String, message: String },
 
+    #[error("too many requests: {message}")]
+    TooManyRequests {
+        message: String,
+        retry_after_secs: u64,
+    },
+
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -59,6 +68,13 @@ pub enum AppError {
 }
 
 impl AppError {
+    pub fn bad_request(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::BadRequest {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+
     pub fn validation(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Validation {
             code: code.into(),
@@ -112,6 +128,13 @@ impl AppError {
         }
     }
 
+    pub fn too_many_requests(message: impl Into<String>, retry_after_secs: u64) -> Self {
+        Self::TooManyRequests {
+            message: message.into(),
+            retry_after_secs: retry_after_secs.max(1),
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal {
             message: message.into(),
@@ -121,6 +144,10 @@ impl AppError {
     // map AppError to HTTP status code, machine-readable code, and message
     pub fn to_error_payload(&self) -> (StatusCode, String, String, Option<serde_json::Value>) {
         match self {
+            Self::BadRequest { code, message } => {
+                (StatusCode::BAD_REQUEST, code.clone(), message.clone(), None)
+            }
+
             Self::Validation {
                 code,
                 message,
@@ -168,6 +195,13 @@ impl AppError {
                 (StatusCode::NOT_FOUND, code.clone(), message.clone(), None)
             }
 
+            Self::TooManyRequests { message, .. } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED".to_string(),
+                message.clone(),
+                None,
+            ),
+
             Self::Database(err) => map_database_error(err),
 
             Self::Internal { message } => {
@@ -204,6 +238,71 @@ fn map_p0403_error(
     }
 }
 
+fn map_pg_code(
+    code: &str,
+    msg: &str,
+    detail: Option<&str>,
+) -> (StatusCode, String, String, Option<serde_json::Value>) {
+    match code {
+        // custom postgres error codes from record_stock_movement and record_audit_event
+        "P0409" => (
+            StatusCode::CONFLICT,
+            "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH".to_string(),
+            detail
+                .unwrap_or("Idempotency key was already used with a different request payload.")
+                .to_string(),
+            None,
+        ),
+        "P0422" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            msg.to_string(),
+            detail.unwrap_or(msg).to_string(),
+            None,
+        ),
+        "P0403" => map_p0403_error(msg, detail),
+        "P0404" => (
+            StatusCode::NOT_FOUND,
+            msg.to_string(),
+            detail.unwrap_or("Resource not found.").to_string(),
+            None,
+        ),
+        // standard postgres error codes
+        "23505" => (
+            StatusCode::CONFLICT,
+            "DUPLICATE_RESOURCE".to_string(),
+            "A resource with these unique attributes already exists.".to_string(),
+            None,
+        ),
+        "23503" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "FOREIGN_KEY_VIOLATION".to_string(),
+            "Referenced entity does not exist.".to_string(),
+            None,
+        ),
+        "23514" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "CONSTRAINT_VIOLATION".to_string(),
+            "Request violated a database data constraint.".to_string(),
+            None,
+        ),
+        "22003" => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "NUMERIC_OUT_OF_RANGE".to_string(),
+            "Numeric value is outside the allowed range.".to_string(),
+            None,
+        ),
+        _ => {
+            tracing::error!("unhandled postgres error [{code}]: {msg}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_SERVER_ERROR".to_string(),
+                "An unexpected database error occurred.".to_string(),
+                None,
+            )
+        }
+    }
+}
+
 fn map_database_error(
     err: &sqlx::Error,
 ) -> (StatusCode, String, String, Option<serde_json::Value>) {
@@ -213,52 +312,7 @@ fn map_database_error(
             .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
             .and_then(|p| p.detail());
 
-        match code.as_ref() {
-            // custom postgres error codes from record_stock_movement and record_audit_event
-            "P0409" => (
-                StatusCode::CONFLICT,
-                "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH".to_string(),
-                detail
-                    .unwrap_or("Idempotency key was already used with a different request payload.")
-                    .to_string(),
-                None,
-            ),
-            "P0422" => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                db_err.message().to_string(),
-                detail.unwrap_or(db_err.message()).to_string(),
-                None,
-            ),
-            "P0403" => map_p0403_error(db_err.message(), detail),
-            "P0404" => (
-                StatusCode::NOT_FOUND,
-                db_err.message().to_string(),
-                detail.unwrap_or("Resource not found.").to_string(),
-                None,
-            ),
-            // standard postgres error codes
-            "23505" => (
-                StatusCode::CONFLICT,
-                "DUPLICATE_RESOURCE".to_string(),
-                "A resource with these unique attributes already exists.".to_string(),
-                None,
-            ),
-            "23503" => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "FOREIGN_KEY_VIOLATION".to_string(),
-                "Referenced entity does not exist.".to_string(),
-                None,
-            ),
-            _ => {
-                tracing::error!("unhandled postgres error [{code}]: {}", db_err.message());
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "INTERNAL_SERVER_ERROR".to_string(),
-                    "An unexpected database error occurred.".to_string(),
-                    None,
-                )
-            }
-        }
+        map_pg_code(code.as_ref(), db_err.message(), detail)
     } else if matches!(err, sqlx::Error::RowNotFound) {
         (
             StatusCode::NOT_FOUND,
@@ -279,6 +333,12 @@ fn map_database_error(
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let retry_after = match &self {
+            Self::TooManyRequests {
+                retry_after_secs, ..
+            } => Some((*retry_after_secs).max(1)),
+            _ => None,
+        };
         let (status, code, message, details) = self.to_error_payload();
 
         let envelope = ErrorEnvelope {
@@ -308,6 +368,11 @@ impl IntoResponse for AppError {
         );
         res.headers_mut()
             .insert(NOSNIFF_HEADER, HeaderValue::from_static(NOSNIFF_VALUE));
+        if let Some(secs) = retry_after {
+            if let Ok(val) = HeaderValue::from_str(&secs.to_string()) {
+                res.headers_mut().insert(RETRY_AFTER, val);
+            }
+        }
 
         res
     }
@@ -384,5 +449,55 @@ mod tests {
         assert_eq!(code, "APPEND_ONLY_VIOLATION");
         assert!(!msg.contains("stock_ledger"));
         assert!(!msg.contains("public."));
+    }
+
+    #[test]
+    fn bad_request_status_and_envelope() {
+        let err = AppError::bad_request("INVALID_REQUEST", "logout requires a session cookie");
+        let (status, code, msg, details) = err.to_error_payload();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(code, "INVALID_REQUEST");
+        assert_eq!(msg, "logout requires a session cookie");
+        assert!(details.is_none());
+    }
+
+    #[test]
+    fn too_many_requests_sets_429_and_retry_after_header() {
+        let err = AppError::too_many_requests("Too many login attempts.", 42);
+        let (status, code, msg, _) = err.to_error_payload();
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(code, "RATE_LIMITED");
+        assert_eq!(msg, "Too many login attempts.");
+
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers().get(RETRY_AFTER).unwrap(), "42");
+        assert_eq!(resp.headers().get(NOSNIFF_HEADER).unwrap(), NOSNIFF_VALUE);
+
+        let clamped = AppError::too_many_requests("Slow down.", 0).into_response();
+        assert_eq!(clamped.headers().get(RETRY_AFTER).unwrap(), "1");
+    }
+
+    #[test]
+    fn pg_constraint_and_numeric_error_codes_map_to_422() {
+        let (st_check, code_check, _, _) = map_pg_code("23514", "check constraint", None);
+        assert_eq!(st_check, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(code_check, "CONSTRAINT_VIOLATION");
+
+        let (st_num, code_num, _, _) = map_pg_code("22003", "numeric field overflow", None);
+        assert_eq!(st_num, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(code_num, "NUMERIC_OUT_OF_RANGE");
+
+        let (st_idem, code_idem, _, _) = map_pg_code("P0409", "mismatch", None);
+        assert_eq!(st_idem, StatusCode::CONFLICT);
+        assert_eq!(code_idem, "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+
+        let (st_dup, code_dup, _, _) = map_pg_code("23505", "duplicate", None);
+        assert_eq!(st_dup, StatusCode::CONFLICT);
+        assert_eq!(code_dup, "DUPLICATE_RESOURCE");
+
+        let (st_fk, code_fk, _, _) = map_pg_code("23503", "fk violation", None);
+        assert_eq!(st_fk, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(code_fk, "FOREIGN_KEY_VIOLATION");
     }
 }

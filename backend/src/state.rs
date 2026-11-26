@@ -1,6 +1,7 @@
 // shared application state and startup database pool initialization
 
 use crate::config::{verify_pool_role, AppConfig, ConfigError};
+use crate::guards::rate_limit::RateLimiterState;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
 use std::str::FromStr;
@@ -33,11 +34,20 @@ pub enum StartupError {
 pub struct AppState {
     pub db: PgPool,
     pub config: Arc<AppConfig>,
+    pub rate_limiter: Arc<RateLimiterState>,
 }
 
 impl AppState {
     pub fn new(db: PgPool, config: Arc<AppConfig>) -> Self {
-        Self { db, config }
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config.rate_limit_auth_per_min,
+            config.rate_limit_api_per_min,
+        ));
+        Self {
+            db,
+            config,
+            rate_limiter,
+        }
     }
 
     pub async fn from_config(config: AppConfig) -> Result<Self, StartupError> {
@@ -84,9 +94,6 @@ impl AppState {
             .await
             .map_err(StartupError::RoleVerification)?;
 
-        Ok(Self {
-            db: app_pool,
-            config: Arc::new(config),
-        })
+        Ok(Self::new(app_pool, Arc::new(config)))
     }
 }

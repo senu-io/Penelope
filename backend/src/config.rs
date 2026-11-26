@@ -88,6 +88,15 @@ pub enum ConfigError {
 
     #[error("invalid initial admin email '{0}'")]
     InvalidAdminEmail(String),
+
+    #[error("invalid boolean value for {var_name}: '{value}' (expected true, false, 1, or 0)")]
+    InvalidBool { var_name: String, value: String },
+
+    #[error("FRONTEND_ORIGIN must contain at least one valid origin")]
+    EmptyCorsOrigins,
+
+    #[error("invalid cors origin '{0}' (expected scheme://host[:port] with http or https and no path or wildcard)")]
+    InvalidCorsOrigin(String),
 }
 
 // validate database connection url syntax and expected role username
@@ -202,7 +211,7 @@ pub fn validate_initial_admin(
     }
 
     Ok(InitialAdminConfig {
-        email: email_trimmed.to_string(),
+        email: email_trimmed.to_ascii_lowercase(),
         password: SecretString::new(pw_trimmed.to_string()),
         full_name: if name_trimmed.is_empty() {
             "System Administrator".to_string()
@@ -210,6 +219,92 @@ pub fn validate_initial_admin(
             name_trimmed.to_string()
         },
     })
+}
+
+fn parse_bool_var(var_name: &str, raw: Option<String>, default: bool) -> Result<bool, ConfigError> {
+    let Some(val) = raw else {
+        return Ok(default);
+    };
+    let trimmed = val.trim();
+    if trimmed.is_empty() {
+        return Ok(default);
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(ConfigError::InvalidBool {
+            var_name: var_name.to_string(),
+            value: trimmed.to_string(),
+        }),
+    }
+}
+
+fn is_valid_host_chars(host: &str) -> bool {
+    !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+}
+
+pub fn validate_cors_origin(raw: &str) -> Result<String, ConfigError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "*" || trimmed.chars().any(char::is_control) {
+        return Err(ConfigError::InvalidCorsOrigin(raw.to_string()));
+    }
+
+    let (scheme, rest) = if let Some(after) = trimmed.strip_prefix("http://") {
+        ("http", after)
+    } else if let Some(after) = trimmed.strip_prefix("https://") {
+        ("https", after)
+    } else if let Some((raw_scheme, after)) = trimmed.split_once("://") {
+        let lower_scheme = raw_scheme.to_ascii_lowercase();
+        if lower_scheme != "http" && lower_scheme != "https" {
+            return Err(ConfigError::InvalidCorsOrigin(raw.to_string()));
+        }
+        if lower_scheme == "http" {
+            ("http", after)
+        } else {
+            ("https", after)
+        }
+    } else {
+        return Err(ConfigError::InvalidCorsOrigin(raw.to_string()));
+    };
+
+    if rest.is_empty()
+        || rest
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '@' | '*'))
+    {
+        return Err(ConfigError::InvalidCorsOrigin(raw.to_string()));
+    }
+
+    let authority_valid = if let Some(after_bracket) = rest.strip_prefix('[') {
+        if let Some((host, port_part)) = after_bracket.split_once(']') {
+            let valid_ipv6 =
+                !host.is_empty() && host.chars().all(|c| c.is_ascii_hexdigit() || c == ':');
+            if !valid_ipv6 {
+                false
+            } else if port_part.is_empty() {
+                true
+            } else if let Some(port_str) = port_part.strip_prefix(':') {
+                port_str.parse::<u16>().map(|p| p > 0).unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else if let Some((host, port_str)) = rest.rsplit_once(':') {
+        is_valid_host_chars(host) && port_str.parse::<u16>().map(|p| p > 0).unwrap_or(false)
+    } else {
+        is_valid_host_chars(rest)
+    };
+
+    if !authority_valid {
+        return Err(ConfigError::InvalidCorsOrigin(raw.to_string()));
+    }
+
+    Ok(format!("{scheme}://{}", rest.to_ascii_lowercase()))
 }
 
 #[derive(Clone)]
@@ -339,6 +434,7 @@ pub struct AppConfig {
     pub initial_admin: Option<InitialAdminConfig>,
     pub default_currency_code: String,
     pub seed_demo_data: bool,
+    pub cookie_secure: bool,
     pub session_idle_ttl_hours: u32,
     pub session_absolute_ttl_hours: u32,
     pub rate_limit_auth_per_min: u32,
@@ -359,6 +455,7 @@ impl std::fmt::Debug for AppConfig {
             .field("initial_admin_present", &self.initial_admin.is_some())
             .field("default_currency_code", &self.default_currency_code)
             .field("seed_demo_data", &self.seed_demo_data)
+            .field("cookie_secure", &self.cookie_secure)
             .field("session_idle_ttl_hours", &self.session_idle_ttl_hours)
             .field(
                 "session_absolute_ttl_hours",
@@ -400,9 +497,11 @@ impl AppConfig {
 
         validate_db_url_role("DATABASE_URL", &database_url, "penelope_app")?;
 
-        let run_migrations = get_var("RUN_MIGRATIONS_ON_STARTUP")
-            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
-            .unwrap_or(false);
+        let run_migrations = parse_bool_var(
+            "RUN_MIGRATIONS_ON_STARTUP",
+            get_var("RUN_MIGRATIONS_ON_STARTUP"),
+            false,
+        )?;
 
         let raw_migration_url = get_var("MIGRATION_DATABASE_URL")
             .map(|v| v.trim().to_string())
@@ -445,11 +544,15 @@ impl AppConfig {
 
         let cors_raw =
             get_var("FRONTEND_ORIGIN").unwrap_or_else(|| "http://localhost:5173".to_string());
-        let cors_allowed_origins = cors_raw
+        let cors_allowed_origins: Vec<String> = cors_raw
             .split(',')
-            .map(|s| s.trim().to_string())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
-            .collect();
+            .map(validate_cors_origin)
+            .collect::<Result<Vec<_>, _>>()?;
+        if cors_allowed_origins.is_empty() {
+            return Err(ConfigError::EmptyCorsOrigins);
+        }
 
         let active_key_id = get_var("PENELOPE_ACTIVE_KEY_ID")
             .ok_or_else(|| ConfigError::MissingVar("PENELOPE_ACTIVE_KEY_ID".to_string()))?
@@ -462,9 +565,11 @@ impl AppConfig {
 
         let keyring = KeyRing::from_env_str(active_key_id, &raw_keys)?;
 
-        let bootstrap_enabled = get_var("BOOTSTRAP_INITIAL_ADMIN")
-            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
-            .unwrap_or(false);
+        let bootstrap_enabled = parse_bool_var(
+            "BOOTSTRAP_INITIAL_ADMIN",
+            get_var("BOOTSTRAP_INITIAL_ADMIN"),
+            false,
+        )?;
 
         let initial_admin = if bootstrap_enabled {
             let email = get_var("INITIAL_ADMIN_EMAIL")
@@ -489,9 +594,9 @@ impl AppConfig {
             return Err(ConfigError::UnsupportedCurrency(default_currency_code));
         }
 
-        let seed_demo_data = get_var("SEED_DEMO_DATA")
-            .map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
-            .unwrap_or(false);
+        let seed_demo_data = parse_bool_var("SEED_DEMO_DATA", get_var("SEED_DEMO_DATA"), false)?;
+
+        let cookie_secure = parse_bool_var("COOKIE_SECURE", get_var("COOKIE_SECURE"), false)?;
 
         let session_idle_ttl_hours = get_var("SESSION_IDLE_TTL_HOURS")
             .unwrap_or_else(|| "24".to_string())
@@ -546,6 +651,7 @@ impl AppConfig {
             initial_admin,
             default_currency_code,
             seed_demo_data,
+            cookie_secure,
             session_idle_ttl_hours,
             session_absolute_ttl_hours,
             rate_limit_auth_per_min,
@@ -915,5 +1021,100 @@ mod tests {
             AppConfig::from_pairs(bad_email).unwrap_err(),
             ConfigError::InvalidAdminEmail(_)
         ));
+    }
+
+    #[test]
+    fn cookie_secure_defaults_false_and_parses_strict_booleans() {
+        let default_cfg = AppConfig::from_pairs(sample_env_pairs()).expect("default config");
+        assert!(!default_cfg.cookie_secure);
+
+        for raw in ["true", "TRUE", "1", " 1 "] {
+            let mut pairs = sample_env_pairs();
+            pairs.push(("COOKIE_SECURE", raw.to_string()));
+            let cfg = AppConfig::from_pairs(pairs).expect("truthy cookie_secure");
+            assert!(cfg.cookie_secure, "expected true for {raw}");
+        }
+
+        for raw in ["false", "FALSE", "0", " 0 ", ""] {
+            let mut pairs = sample_env_pairs();
+            pairs.push(("COOKIE_SECURE", raw.to_string()));
+            let cfg = AppConfig::from_pairs(pairs).expect("falsy cookie_secure");
+            assert!(!cfg.cookie_secure, "expected false for {raw}");
+        }
+
+        for bad in ["yes", "no", "ture", "2"] {
+            let mut pairs = sample_env_pairs();
+            pairs.push(("COOKIE_SECURE", bad.to_string()));
+            let err = AppConfig::from_pairs(pairs).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::InvalidBool { ref var_name, .. } if var_name == "COOKIE_SECURE"
+                ),
+                "expected InvalidBool for {bad}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_bool_on_other_flags() {
+        let mut pairs = sample_env_pairs();
+        pairs.push(("RUN_MIGRATIONS_ON_STARTUP", "yes".to_string()));
+        let err = AppConfig::from_pairs(pairs).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidBool { ref var_name, ref value }
+                if var_name == "RUN_MIGRATIONS_ON_STARTUP" && value == "yes"
+        ));
+    }
+
+    #[test]
+    fn validates_and_normalizes_cors_origins() {
+        let mut ok_pairs = sample_env_pairs();
+        ok_pairs.push((
+            "FRONTEND_ORIGIN",
+            "HTTP://Localhost:5173, https://wms.example.com:8443".to_string(),
+        ));
+        let cfg = AppConfig::from_pairs(ok_pairs).expect("normalized origins");
+        assert_eq!(
+            cfg.cors_allowed_origins,
+            vec!["http://localhost:5173", "https://wms.example.com:8443"]
+        );
+
+        let mut empty_pairs = sample_env_pairs();
+        empty_pairs.push(("FRONTEND_ORIGIN", "  , ".to_string()));
+        assert!(matches!(
+            AppConfig::from_pairs(empty_pairs).unwrap_err(),
+            ConfigError::EmptyCorsOrigins
+        ));
+
+        for bad in [
+            "*",
+            "http://localhost:5173/",
+            "http://localhost:5173/app",
+            "ftp://wms.example.com",
+            "http://localhost:0",
+            "http://localhost:99999",
+            "http://user@localhost:5173",
+        ] {
+            let mut bad_pairs = sample_env_pairs();
+            bad_pairs.push(("FRONTEND_ORIGIN", bad.to_string()));
+            let err = AppConfig::from_pairs(bad_pairs).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InvalidCorsOrigin(_)),
+                "expected InvalidCorsOrigin for {bad}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn initial_admin_email_is_lowercased() {
+        let mut pairs = sample_env_pairs();
+        pairs.push((
+            "INITIAL_ADMIN_EMAIL",
+            "Boss.User@Penelope.Local".to_string(),
+        ));
+        let cfg = AppConfig::from_pairs(pairs).expect("valid config");
+        assert_eq!(cfg.initial_admin.unwrap().email, "boss.user@penelope.local");
     }
 }
