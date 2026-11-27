@@ -1,5 +1,3 @@
-// postgres role separation, least privilege, and actor scope boundary tests
-
 mod common;
 use common::*;
 use rust_decimal::Decimal;

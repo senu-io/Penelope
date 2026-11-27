@@ -1,5 +1,3 @@
-// first-run admin bootstrap locked by a postgres advisory xact lock
-
 use crate::config::InitialAdminConfig;
 use crate::crypto;
 use crate::error::AppError;

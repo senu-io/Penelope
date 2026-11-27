@@ -1,5 +1,3 @@
-// authentication extractor resolving x-api-key or keyed penelope_session cookies
-
 use crate::crypto;
 use crate::error::AppError;
 use crate::guards::csrf;
@@ -230,11 +228,14 @@ async fn authenticate_api_key(
         Some(prev) => (now - prev).num_seconds() >= ACTIVITY_TOUCH_INTERVAL_SECS,
     };
     if should_touch {
-        let _ = sqlx::query("UPDATE public.api_keys SET last_used_at = $2 WHERE id = $1")
+        if let Err(err) = sqlx::query("UPDATE public.api_keys SET last_used_at = $2 WHERE id = $1")
             .bind(row.id)
             .bind(now)
             .execute(&state.db)
-            .await;
+            .await
+        {
+            tracing::warn!("failed to touch api key {} last_used_at: {}", row.id, err);
+        }
     }
 
     Ok(ActorContext {
@@ -287,14 +288,20 @@ async fn authenticate_session(
     let absolute_deadline = row.created_at + abs_ttl;
 
     if now >= row.expires_at || now >= absolute_deadline {
-        let _ = sqlx::query("DELETE FROM public.sessions WHERE id = $1")
+        if let Err(err) = sqlx::query("DELETE FROM public.sessions WHERE id = $1")
             .bind(row.session_id)
             .execute(&state.db)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                "failed to clean up expired session {}: {}",
+                row.session_id,
+                err
+            );
+        }
         return Err(AppError::unauthorized("Session expired."));
     }
 
-    // verify origin/referer on state-changing cookie requests
     csrf::verify_cookie_csrf(
         &parts.method,
         &parts.headers,
@@ -307,14 +314,21 @@ async fn authenticate_session(
     if (now - row.last_active_at).num_seconds() >= ACTIVITY_TOUCH_INTERVAL_SECS {
         let idle_ttl = Duration::hours(i64::from(state.config.session_idle_ttl_hours));
         let next_expiry = (now + idle_ttl).min(absolute_deadline);
-        let _ = sqlx::query(
+        if let Err(err) = sqlx::query(
             "UPDATE public.sessions SET last_active_at = $2, expires_at = $3 WHERE id = $1",
         )
         .bind(row.session_id)
         .bind(now)
         .bind(next_expiry)
         .execute(&state.db)
-        .await;
+        .await
+        {
+            tracing::warn!(
+                "failed to extend session {} activity: {}",
+                row.session_id,
+                err
+            );
+        }
     }
 
     Ok(ActorContext {
@@ -340,7 +354,13 @@ impl FromRequestParts<AppState> for ActorContext {
         let ip_address = client_ip_from_extensions(&parts.extensions).unwrap_or_default();
 
         // when x-api-key header is present, never fall back to session cookie
-        if let Some(raw_api_key) = parts.headers.get(API_KEY_HEADER_NAME) {
+        let api_keys: Vec<_> = parts.headers.get_all(API_KEY_HEADER_NAME).iter().collect();
+        if api_keys.len() > 1 {
+            return Err(AppError::unauthorized(
+                "Multiple API key headers are not permitted.",
+            ));
+        }
+        if let Some(raw_api_key) = api_keys.first() {
             return authenticate_api_key(state, raw_api_key, ip_address).await;
         }
 

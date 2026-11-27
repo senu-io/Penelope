@@ -1,5 +1,3 @@
-// append-only security and activity audit service
-
 use crate::error::AppError;
 use crate::models::{AuditLogRecord, AuditLogResponse};
 use chrono::{DateTime, Utc};

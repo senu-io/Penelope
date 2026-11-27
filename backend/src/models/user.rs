@@ -1,5 +1,3 @@
-// user, session, and api key persistence records and public responses
-
 use crate::error::AppError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

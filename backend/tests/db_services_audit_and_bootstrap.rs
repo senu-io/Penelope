@@ -1,5 +1,3 @@
-// postgresql integration tests for AuditService and initial admin bootstrap
-
 mod common;
 
 use chrono::{Duration, Utc};

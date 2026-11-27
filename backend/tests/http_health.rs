@@ -1,34 +1,17 @@
-// http health endpoint integration tests against postgres
-
 mod common;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Request, StatusCode};
-use penelope_backend::config::AppConfig;
 use penelope_backend::{routes, AppState};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 
-fn test_app_config() -> AppConfig {
-    let key_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    AppConfig::from_pairs([
-        (
-            "DATABASE_URL",
-            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db".to_string(),
-        ),
-        ("SESSION_SECRET", key_hex.to_string()),
-        ("PENELOPE_ACTIVE_KEY_ID", "1".to_string()),
-        ("PENELOPE_ENCRYPTION_KEYS", format!("1:{key_hex}")),
-    ])
-    .expect("valid test config")
-}
-
 #[tokio::test]
 async fn health_live_returns_ok_and_nosniff() {
     let (_owner_pool, app_pool) = common::setup_pools().await;
-    let state = AppState::new(app_pool, Arc::new(test_app_config()));
+    let state = AppState::new(app_pool, Arc::new(common::test_app_config(false)));
     let app = routes::build_router(state);
 
     let res = app
@@ -60,7 +43,7 @@ async fn health_live_returns_ok_and_nosniff() {
 #[tokio::test]
 async fn health_ready_returns_ok_with_live_postgres() {
     let (_owner_pool, app_pool) = common::setup_pools().await;
-    let state = AppState::new(app_pool, Arc::new(test_app_config()));
+    let state = AppState::new(app_pool, Arc::new(common::test_app_config(false)));
     let app = routes::build_router(state);
 
     let res = app
@@ -94,7 +77,7 @@ async fn health_ready_returns_503_when_database_unreachable() {
         .acquire_timeout(Duration::from_millis(200))
         .connect_lazy_with(bad_opts);
 
-    let state = AppState::new(bad_pool, Arc::new(test_app_config()));
+    let state = AppState::new(bad_pool, Arc::new(common::test_app_config(false)));
     let app = routes::build_router(state);
 
     let res = app

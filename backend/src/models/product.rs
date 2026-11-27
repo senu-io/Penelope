@@ -1,5 +1,3 @@
-// category and product persistence records and public responses
-
 use crate::error::AppError;
 use crate::models::round_line_valuation_eur;
 use chrono::{DateTime, Utc};

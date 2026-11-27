@@ -1,5 +1,3 @@
-// persistence records (*Record) and public api dtos (*Response) with normalized decimal validators
-
 pub mod audit;
 pub mod ledger;
 pub mod product;

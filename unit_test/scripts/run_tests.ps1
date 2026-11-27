@@ -1,7 +1,7 @@
 param(
     [ValidateSet("backend", "frontend", "full")]
     [string]$Suite = "full",
-    [ValidateSet("", "unit", "role_boundaries", "roles", "db", "concurrency", "idempotency", "mwa", "ledger", "append_only", "services", "audit", "bootstrap", "health", "http")]
+    [ValidateSet("", "unit", "role_boundaries", "roles", "db", "concurrency", "idempotency", "mwa", "ledger", "append_only", "services", "audit", "bootstrap", "health", "auth", "sessions", "rbac", "api_keys", "admin", "http")]
     [string]$Target = "",
     [switch]$Private,
     [string]$RepoRootOverride = ""
@@ -200,6 +200,27 @@ if ($Suite -in @("backend", "full")) {
                 Invoke-TestRunnerStep -Name "Rust Integration: HTTP Health Routes (--test http_health)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
                     Push-Location -LiteralPath (Join-Path $repoRoot "backend")
                     cargo test --test http_health -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("auth", "sessions", "http")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: HTTP Auth & Sessions (--test http_auth_and_sessions)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test http_auth_and_sessions -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("rbac", "api_keys", "http")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: HTTP RBAC & API Keys (--test http_rbac_and_api_keys)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test http_rbac_and_api_keys -- --nocapture
+                    Pop-Location
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($Target) -or $Target -in @("admin", "audit", "http")) {
+                Invoke-TestRunnerStep -Name "Rust Integration: HTTP Admin & Audit Logs (--test http_admin_and_audit)" -CountPattern 'test result: ok\.\s+(\d+)\s+passed' -Action {
+                    Push-Location -LiteralPath (Join-Path $repoRoot "backend")
+                    cargo test --test http_admin_and_audit -- --nocapture
                     Pop-Location
                 }
             }

@@ -1,5 +1,3 @@
-// app configuration and encryption keyring validation
-
 use secrecy::SecretString;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
@@ -53,6 +51,12 @@ pub enum ConfigError {
     #[error("initial admin password is too short: must be at least 12 characters, got {0}")]
     AdminPasswordTooShort(usize),
 
+    #[error("initial admin password is too long: max 256 bytes, got {0}")]
+    AdminPasswordTooLong(usize),
+
+    #[error("initial admin full name must be at most 120 characters")]
+    InvalidAdminName,
+
     #[error(
         "MIGRATION_DATABASE_URL must use the migration owner role and cannot equal DATABASE_URL"
     )]
@@ -99,7 +103,6 @@ pub enum ConfigError {
     InvalidCorsOrigin(String),
 }
 
-// validate database connection url syntax and expected role username
 pub fn validate_db_url_role(
     var_name: &str,
     url: &str,
@@ -121,7 +124,6 @@ pub fn validate_db_url_role(
     Ok(())
 }
 
-// verify live postgres connection pool authenticates as the expected role before running migrations or queries
 pub async fn verify_pool_role(pool: &PgPool, expected_role: &str) -> Result<(), ConfigError> {
     let current_user: String = sqlx::query_scalar("SELECT current_user")
         .fetch_one(pool)
@@ -146,7 +148,6 @@ fn is_placeholder_value(val: &str) -> bool {
         || lower.contains("example_")
 }
 
-// validate that session secret is a 64-char hex string (256-bit) and not a placeholder or all zeroes
 pub fn validate_session_secret(raw: &str) -> Result<SecretString, ConfigError> {
     let trimmed = raw.trim();
     if is_placeholder_value(trimmed) {
@@ -165,16 +166,49 @@ pub fn validate_session_secret(raw: &str) -> Result<SecretString, ConfigError> {
     Ok(SecretString::new(trimmed.to_string()))
 }
 
-// validate initial admin bootstrap credentials against placeholder values and minimum password length
+pub fn normalize_and_validate_email(raw: &str) -> Result<String, &'static str> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty()
+        || normalized.len() > 254
+        || normalized
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err("Email must be a valid address up to 254 characters without spaces.");
+    }
+
+    let parts: Vec<&str> = normalized.split('@').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return Err("Email must contain a valid local part and domain.");
+    }
+
+    let local = parts[0];
+    let domain = parts[1];
+
+    if local.len() > 64 || local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+        return Err("Email must contain a valid local part and domain.");
+    }
+
+    if !domain.contains('.')
+        || domain.split('.').any(|label| {
+            label.is_empty()
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    {
+        return Err("Email domain must be valid.");
+    }
+
+    Ok(normalized)
+}
+
 pub fn validate_initial_admin(
     email: &str,
     pw: &str,
     full_name: &str,
 ) -> Result<InitialAdminConfig, ConfigError> {
     let email_trimmed = email.trim();
-    let pw_trimmed = pw.trim();
-    let name_trimmed = full_name.trim();
-
     if email_trimmed.is_empty() {
         return Err(ConfigError::MissingVar(
             "INITIAL_ADMIN_EMAIL cannot be blank".to_string(),
@@ -185,34 +219,37 @@ pub fn validate_initial_admin(
             "INITIAL_ADMIN_EMAIL".to_string(),
         ));
     }
-    let email_parts: Vec<&str> = email_trimmed.split('@').collect();
-    if email_trimmed.chars().any(char::is_whitespace)
-        || email_parts.len() != 2
-        || email_parts[0].is_empty()
-        || email_parts[1].is_empty()
-    {
-        return Err(ConfigError::InvalidAdminEmail(email_trimmed.to_string()));
-    }
+    let normalized_email = normalize_and_validate_email(email_trimmed)
+        .map_err(|_| ConfigError::InvalidAdminEmail(email_trimmed.to_string()))?;
 
-    if pw_trimmed.is_empty() {
+    if pw.trim().is_empty() {
         return Err(ConfigError::MissingVar(
             "INITIAL_ADMIN_PASSWORD cannot be blank".to_string(),
         ));
     }
-    if is_placeholder_value(pw_trimmed) {
+    if is_placeholder_value(pw) {
         return Err(ConfigError::PlaceholderForbidden(
             "INITIAL_ADMIN_PASSWORD".to_string(),
         ));
     }
 
-    let pw_char_len = pw_trimmed.chars().count();
+    let pw_char_len = pw.chars().count();
     if pw_char_len < 12 {
         return Err(ConfigError::AdminPasswordTooShort(pw_char_len));
     }
+    if pw.len() > 256 {
+        return Err(ConfigError::AdminPasswordTooLong(pw.len()));
+    }
+
+    let name_trimmed = full_name.trim();
+    if name_trimmed.chars().count() > 120 {
+        return Err(ConfigError::InvalidAdminName);
+    }
 
     Ok(InitialAdminConfig {
-        email: email_trimmed.to_ascii_lowercase(),
-        password: SecretString::new(pw_trimmed.to_string()),
+        email: normalized_email,
+        // keep leading/trailing spaces intact so admin creation and login hash the exact same bytes
+        password: SecretString::new(pw.to_string()),
         full_name: if name_trimmed.is_empty() {
             "System Administrator".to_string()
         } else {
@@ -745,12 +782,12 @@ mod tests {
         vec![
             (
                 "DATABASE_URL",
-                "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db"
+                "postgres://penelope_app:penelope_app_password@127.0.0.1:5432/penelope_db"
                     .to_string(),
             ),
             (
                 "MIGRATION_DATABASE_URL",
-                "postgres://penelope_owner:penelope_owner_password@localhost:5432/penelope_db"
+                "postgres://penelope_owner:penelope_owner_password@127.0.0.1:5432/penelope_db"
                     .to_string(),
             ),
             ("BACKEND_HOST", "0.0.0.0".to_string()),
@@ -867,7 +904,7 @@ mod tests {
         let mut pairs = sample_env_pairs();
         pairs.push((
             "MIGRATION_DATABASE_URL",
-            "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db".to_string(),
+            "postgres://penelope_app:penelope_app_password@127.0.0.1:5432/penelope_db".to_string(),
         ));
 
         let err = AppConfig::from_pairs(pairs).unwrap_err();
@@ -892,7 +929,7 @@ mod tests {
         let mut pairs = sample_env_pairs();
         pairs.push((
             "MIGRATION_DATABASE_URL",
-            "postgres://postgres:penelope_owner_password@localhost:5432/penelope_db".to_string(),
+            "postgres://postgres:penelope_owner_password@127.0.0.1:5432/penelope_db".to_string(),
         ));
 
         let err = AppConfig::from_pairs(pairs).unwrap_err();
@@ -915,7 +952,7 @@ mod tests {
         let mut pairs = sample_env_pairs();
         pairs.push((
             "DATABASE_URL",
-            "postgres://penelope_owner:penelope_owner_password@localhost:5432/penelope_db"
+            "postgres://penelope_owner:penelope_owner_password@127.0.0.1:5432/penelope_db"
                 .to_string(),
         ));
 
@@ -949,7 +986,7 @@ mod tests {
         let mut app_pairs = sample_env_pairs();
         app_pairs.push((
             "DATABASE_URL",
-            "postgres://penelope_app:CHANGE_ME_APP_PASSWORD@localhost:5432/penelope_db".to_string(),
+            "postgres://penelope_app:CHANGE_ME_APP_PASSWORD@127.0.0.1:5432/penelope_db".to_string(),
         ));
         let err_app = AppConfig::from_pairs(app_pairs).unwrap_err();
         match err_app {
@@ -960,7 +997,7 @@ mod tests {
         let mut mig_pairs = sample_env_pairs();
         mig_pairs.push((
             "MIGRATION_DATABASE_URL",
-            "postgres://penelope_owner:CHANGE_ME_OWNER_PASSWORD@localhost:5432/penelope_db"
+            "postgres://penelope_owner:CHANGE_ME_OWNER_PASSWORD@127.0.0.1:5432/penelope_db"
                 .to_string(),
         ));
         let err_mig = AppConfig::from_pairs(mig_pairs).unwrap_err();
@@ -1116,5 +1153,44 @@ mod tests {
         ));
         let cfg = AppConfig::from_pairs(pairs).expect("valid config");
         assert_eq!(cfg.initial_admin.unwrap().email, "boss.user@penelope.local");
+    }
+
+    #[test]
+    fn initial_admin_preserves_password_spaces_and_enforces_email_and_length_bounds() {
+        use secrecy::ExposeSecret;
+
+        let admin =
+            validate_initial_admin("Lead.Admin@Penelope.Local", " padded secret 123 ", "Admin")
+                .expect("valid admin with spaces in password");
+        assert_eq!(admin.password.expose_secret(), " padded secret 123 ");
+
+        let too_long_pw = "a".repeat(257);
+        assert!(matches!(
+            validate_initial_admin("lead@penelope.local", &too_long_pw, "Admin").unwrap_err(),
+            ConfigError::AdminPasswordTooLong(257)
+        ));
+
+        let too_long_name = "n".repeat(121);
+        assert!(matches!(
+            validate_initial_admin("lead@penelope.local", "valid_password_123", &too_long_name)
+                .unwrap_err(),
+            ConfigError::InvalidAdminName
+        ));
+
+        for bad_email in [
+            "admin@localhost",
+            "a@b..c",
+            "a@b.c\x00",
+            ".lead@penelope.local",
+            "lead..user@penelope.local",
+        ] {
+            assert!(
+                matches!(
+                    validate_initial_admin(bad_email, "valid_password_123", "Admin").unwrap_err(),
+                    ConfigError::InvalidAdminEmail(_)
+                ),
+                "expected InvalidAdminEmail for {bad_email:?}"
+            );
+        }
     }
 }

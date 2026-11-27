@@ -1,5 +1,3 @@
-// idempotency replay, payload hash collision, and concurrent dispatch serialization tests
-
 mod common;
 use common::*;
 use rust_decimal::Decimal;

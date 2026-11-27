@@ -1,5 +1,3 @@
-// cryptographic primitives: argon2id password hashing, versioned aes-256-gcm field encryption, and 256-bit api keys
-
 use crate::config::KeyRing;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -12,7 +10,6 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-// envelope header constants
 const ENVELOPE_VERSION: u8 = 0x01;
 const VERSION_LEN: usize = 1;
 const KEY_ID_LEN: usize = 2;
@@ -68,7 +65,6 @@ fn is_lowercase_hex(s: &str) -> bool {
         .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
-// bind envelope header [version | key_id] alongside contextual aad
 fn build_authenticated_aad(version: u8, key_id: u16, aad: &[u8]) -> Vec<u8> {
     let mut full_aad = Vec::with_capacity(VERSION_LEN + KEY_ID_LEN + aad.len());
     full_aad.push(version);
@@ -77,7 +73,6 @@ fn build_authenticated_aad(version: u8, key_id: u16, aad: &[u8]) -> Vec<u8> {
     full_aad
 }
 
-// argon2id password hashing with random salt
 pub fn hash_password(password: &SecretString) -> Result<String, CryptoError> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = argon2_instance();
@@ -87,7 +82,6 @@ pub fn hash_password(password: &SecretString) -> Result<String, CryptoError> {
     Ok(hash.to_string())
 }
 
-// verify password against argon2id phc string
 pub fn verify_password(password: &SecretString, hash_str: &str) -> Result<bool, CryptoError> {
     let parsed_hash = PasswordHash::new(hash_str)
         .map_err(|e| CryptoError::PasswordVerifyFailed(e.to_string()))?;
@@ -99,7 +93,7 @@ pub fn verify_password(password: &SecretString, hash_str: &str) -> Result<bool, 
     }
 }
 
-// encrypt field using versioned envelope: [0x01 | key_id (2B BE) | nonce (12B) | ciphertext + tag]
+// envelope layout: [0x01 | key_id (2B BE) | nonce (12B) | ciphertext + tag]
 pub fn encrypt_field(
     keyring: &KeyRing,
     plaintext: &[u8],

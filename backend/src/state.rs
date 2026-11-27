@@ -1,5 +1,3 @@
-// shared application state and startup database pool initialization
-
 use crate::config::{verify_pool_role, AppConfig, ConfigError};
 use crate::guards::rate_limit::RateLimiterState;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};

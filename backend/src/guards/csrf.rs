@@ -1,5 +1,3 @@
-// origin and referer csrf validation for cookie-backed requests
-
 use crate::config::validate_cors_origin;
 use crate::error::AppError;
 use axum::http::{header, HeaderMap, Method};
@@ -33,8 +31,13 @@ pub fn extract_origin_from_referer(referer: &str) -> Option<String> {
 }
 
 pub fn extract_request_origin(headers: &HeaderMap) -> Option<String> {
-    // if Origin is present, never fall back to Referer
-    if let Some(origin_val) = headers.get(header::ORIGIN) {
+    let origins: Vec<_> = headers.get_all(header::ORIGIN).iter().collect();
+    if origins.len() > 1 {
+        return None;
+    }
+
+    // when Origin is present, never fall back to Referer
+    if let Some(origin_val) = origins.first() {
         let raw = origin_val.to_str().ok()?.trim();
         if raw.eq_ignore_ascii_case("null") || raw.is_empty() {
             return None;
@@ -78,16 +81,22 @@ pub fn verify_cookie_csrf(
     Ok(())
 }
 
-// validate Origin on login when supplied (non-browser clients without Origin are permitted)
+// non-browser clients without Origin can still log in; browser origins must be in allow-list
 pub fn verify_login_origin(
     headers: &HeaderMap,
     allowed_origins: &[String],
 ) -> Result<(), AppError> {
-    let Some(origin_val) = headers.get(header::ORIGIN) else {
+    let origins: Vec<_> = headers.get_all(header::ORIGIN).iter().collect();
+    if origins.is_empty() {
         return Ok(());
-    };
+    }
+    if origins.len() > 1 {
+        return Err(AppError::forbidden(
+            "Multiple Origin headers are not permitted.",
+        ));
+    }
 
-    let raw = origin_val
+    let raw = origins[0]
         .to_str()
         .map_err(|_| AppError::forbidden("Malformed Origin header."))?
         .trim();
@@ -174,5 +183,11 @@ mod tests {
         let mut null_headers = HeaderMap::new();
         null_headers.insert(header::ORIGIN, "null".parse().unwrap());
         assert!(verify_login_origin(&null_headers, &allowed()).is_err());
+
+        let mut dup_headers = HeaderMap::new();
+        dup_headers.append(header::ORIGIN, "http://localhost:5173".parse().unwrap());
+        dup_headers.append(header::ORIGIN, "https://evil.example".parse().unwrap());
+        assert!(verify_login_origin(&dup_headers, &allowed()).is_err());
+        assert!(verify_cookie_csrf(&Method::POST, &dup_headers, &allowed()).is_err());
     }
 }

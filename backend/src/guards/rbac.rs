@@ -1,5 +1,3 @@
-// server-side role-based access control extractors
-
 use crate::error::AppError;
 use crate::guards::auth::ActorContext;
 use crate::state::AppState;

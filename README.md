@@ -18,7 +18,7 @@ Penelope is a self-hosted warehouse inventory management system backed by Rust (
 
 - Product and SKU catalog supporting barcodes, categories, units of measure (`ea`, `box`, `pallet`, `kg`, `l`, `m`), bin locations, reorder thresholds, and Moving Weighted Average (MWA) EUR cost tracking (`total_cost_basis_eur` + `unit_cost_eur`).
 - Idempotent, locked stock movements (`receive`, `dispatch`, `cycle_count`, `damage`) written through append-only ledger and audit triggers in PostgreSQL.
-- Role-based access control (`admin`, `manager`, `operator`) backed by Argon2id password hashing, HttpOnly sessions with CSRF checks, SHA-256 scoped API keys, and versioned AES-256-GCM field encryption for private product notes.
+- Role-based access control (`admin`, `manager`, `operator`) backed by Argon2id password hashing, HttpOnly sessions (HMAC-SHA256 hashed with `SESSION_SECRET`) with Origin/Referer CSRF checks, SHA-256 scoped API keys, and versioned AES-256-GCM field encryption for private product notes.
 - Three-tier PostgreSQL privilege separation (`postgres` bootstrap superuser, non-superuser `penelope_owner` migration role, and least-privilege `penelope_app` runtime role).
 - CSV/JSON bulk import and export (`data_io`), low-stock overview reporting, and printable Code-128/QR SKU labels.
 
@@ -73,6 +73,8 @@ Set these values in `.env` (never commit `.env` to Git):
 - `SESSION_SECRET`: 256-bit (64-character hex) secret generated via `openssl rand -hex 32` (placeholders, non-hex, and all-zero values are rejected).
 - `PENELOPE_ACTIVE_KEY_ID` and `PENELOPE_ENCRYPTION_KEYS`: Versioned `<id>:<64_hex_chars>` keyring for `AES-256-GCM` field encryption.
 - `BOOTSTRAP_INITIAL_ADMIN`, `INITIAL_ADMIN_EMAIL`, and `INITIAL_ADMIN_PASSWORD`: Optional first-run admin bootstrap (enforces a minimum 12-character password and valid email when enabled).
+- `FRONTEND_ORIGIN` and `COOKIE_SECURE`: Allowed comma-separated CORS/CSRF origins (`http://localhost:5173` by default) and `Secure` cookie + HSTS toggle (`false` locally, `true` behind HTTPS).
+- `SESSION_IDLE_TTL_HOURS`, `SESSION_ABSOLUTE_TTL_HOURS`, `RATE_LIMIT_AUTH_PER_MIN`, and `RATE_LIMIT_API_PER_MIN`: Session timeout windows (`24` / `168` hours) and IP rate-limit buckets (`10` / `120` requests per minute).
 
 ## License
 

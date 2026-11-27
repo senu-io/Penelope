@@ -1,5 +1,3 @@
-// mwa costing, cycle-count inventory arithmetic, and append-only trigger tests
-
 mod common;
 use common::*;
 use rust_decimal::Decimal;

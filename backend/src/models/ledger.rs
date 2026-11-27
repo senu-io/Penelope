@@ -1,5 +1,3 @@
-// stock ledger persistence records and public api responses
-
 use crate::error::AppError;
 use crate::models::product::CurrencyCode;
 use chrono::{DateTime, Utc};

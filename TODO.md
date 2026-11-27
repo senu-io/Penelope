@@ -81,3 +81,4 @@ Tasks are checked off only after implementation and tests pass.
 | `6f4b7f0` | 2026-11-21 | `chore: drop duplicate assets and update docs` |
 | `53b4443` | 2026-11-24 | `feat(backend): add crypto helpers for argon2id, aes-gcm, and api keys` |
 | `4122157` | 2026-11-25 | `feat(backend): add domain models, app state, and health endpoints` |
+| `3afb33e` | 2026-11-27 | `feat(backend): add audit service, admin bootstrap, and security guards` |

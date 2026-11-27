@@ -1,5 +1,3 @@
-// standardized error envelope and status code mappings
-
 use axum::http::header::{HeaderValue, CONTENT_TYPE, RETRY_AFTER};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -53,6 +51,15 @@ pub enum AppError {
 
     #[error("not found [{code}]: {message}")]
     NotFound { code: String, message: String },
+
+    #[error("method not allowed: {message}")]
+    MethodNotAllowed { message: String },
+
+    #[error("payload too large: {message}")]
+    PayloadTooLarge { message: String },
+
+    #[error("unsupported media type: {message}")]
+    UnsupportedMediaType { message: String },
 
     #[error("too many requests: {message}")]
     TooManyRequests {
@@ -128,6 +135,24 @@ impl AppError {
         }
     }
 
+    pub fn method_not_allowed(message: impl Into<String>) -> Self {
+        Self::MethodNotAllowed {
+            message: message.into(),
+        }
+    }
+
+    pub fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::PayloadTooLarge {
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported_media_type(message: impl Into<String>) -> Self {
+        Self::UnsupportedMediaType {
+            message: message.into(),
+        }
+    }
+
     pub fn too_many_requests(message: impl Into<String>, retry_after_secs: u64) -> Self {
         Self::TooManyRequests {
             message: message.into(),
@@ -141,7 +166,6 @@ impl AppError {
         }
     }
 
-    // map AppError to HTTP status code, machine-readable code, and message
     pub fn to_error_payload(&self) -> (StatusCode, String, String, Option<serde_json::Value>) {
         match self {
             Self::BadRequest { code, message } => {
@@ -194,6 +218,27 @@ impl AppError {
             Self::NotFound { code, message } => {
                 (StatusCode::NOT_FOUND, code.clone(), message.clone(), None)
             }
+
+            Self::MethodNotAllowed { message } => (
+                StatusCode::METHOD_NOT_ALLOWED,
+                "METHOD_NOT_ALLOWED".to_string(),
+                message.clone(),
+                None,
+            ),
+
+            Self::PayloadTooLarge { message } => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE".to_string(),
+                message.clone(),
+                None,
+            ),
+
+            Self::UnsupportedMediaType { message } => (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "UNSUPPORTED_MEDIA_TYPE".to_string(),
+                message.clone(),
+                None,
+            ),
 
             Self::TooManyRequests { message, .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -499,5 +544,42 @@ mod tests {
         let (st_fk, code_fk, _, _) = map_pg_code("23503", "fk violation", None);
         assert_eq!(st_fk, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(code_fk, "FOREIGN_KEY_VIOLATION");
+    }
+
+    #[test]
+    fn method_not_allowed_payload_too_large_and_unsupported_media_type_envelopes() {
+        for (err, expected_status, expected_code) in [
+            (
+                AppError::method_not_allowed("nope"),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "METHOD_NOT_ALLOWED",
+            ),
+            (
+                AppError::payload_too_large("too big"),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+            ),
+            (
+                AppError::unsupported_media_type("need json"),
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "UNSUPPORTED_MEDIA_TYPE",
+            ),
+        ] {
+            let res = err.into_response();
+            assert_eq!(res.status(), expected_status);
+            assert_eq!(
+                res.headers().get(CONTENT_TYPE).unwrap(),
+                "application/json; charset=utf-8"
+            );
+            assert_eq!(res.headers().get(NOSNIFF_HEADER).unwrap(), NOSNIFF_VALUE);
+
+            let (status, code, _, _) = match expected_code {
+                "METHOD_NOT_ALLOWED" => AppError::method_not_allowed("nope").to_error_payload(),
+                "PAYLOAD_TOO_LARGE" => AppError::payload_too_large("too big").to_error_payload(),
+                _ => AppError::unsupported_media_type("need json").to_error_payload(),
+            };
+            assert_eq!(status, expected_status);
+            assert_eq!(code, expected_code);
+        }
     }
 }

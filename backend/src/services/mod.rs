@@ -1,5 +1,3 @@
-// backend domain services
-
 pub mod audit;
 pub mod bootstrap;
 

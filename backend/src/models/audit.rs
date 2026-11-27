@@ -1,5 +1,3 @@
-// audit log persistence record and public api response
-
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;

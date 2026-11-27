@@ -1,5 +1,3 @@
-// liveness and database readiness probes
-
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -83,7 +81,7 @@ mod tests {
         AppConfig::from_pairs([
             (
                 "DATABASE_URL",
-                "postgres://penelope_app:penelope_app_password@localhost:5432/penelope_db"
+                "postgres://penelope_app:penelope_app_password@127.0.0.1:5432/penelope_db"
                     .to_string(),
             ),
             ("SESSION_SECRET", key_hex.to_string()),

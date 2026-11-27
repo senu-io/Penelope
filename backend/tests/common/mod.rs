@@ -1,10 +1,14 @@
-// shared test setup, database pool connection, and fixture helpers
-
-use penelope_backend::config::verify_pool_role;
+use axum::body::{to_bytes, Body};
+use axum::http::{header, Method, Request, StatusCode};
+use penelope_backend::config::{verify_pool_role, AppConfig};
+use penelope_backend::crypto;
 use rust_decimal::Decimal;
+use secrecy::SecretString;
+use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
 use std::str::FromStr;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 static MIGRATION_ONCE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
@@ -148,4 +152,121 @@ pub async fn insert_test_product(
     .expect("insert test product with allowed columns");
 
     (product_id, sku)
+}
+
+#[allow(dead_code)]
+pub fn test_app_config(cookie_secure: bool) -> AppConfig {
+    let key_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let session_hex = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    AppConfig::from_pairs([
+        (
+            "DATABASE_URL",
+            "postgres://penelope_app:penelope_app_password@127.0.0.1:5432/penelope_db".to_string(),
+        ),
+        ("FRONTEND_ORIGIN", "http://localhost:5173".to_string()),
+        ("SESSION_SECRET", session_hex.to_string()),
+        ("PENELOPE_ACTIVE_KEY_ID", "1".to_string()),
+        ("PENELOPE_ENCRYPTION_KEYS", format!("1:{key_hex}")),
+        (
+            "COOKIE_SECURE",
+            if cookie_secure { "true" } else { "false" }.to_string(),
+        ),
+        ("RATE_LIMIT_AUTH_PER_MIN", "60".to_string()),
+        ("RATE_LIMIT_API_PER_MIN", "500".to_string()),
+    ])
+    .expect("valid test config")
+}
+
+#[allow(dead_code)]
+pub async fn seed_user(pool: &PgPool, role: &str, is_active: bool, raw_pw: &str) -> (Uuid, String) {
+    let user_id = Uuid::new_v4();
+    let email = format!("{role}_{}@penelope.local", Uuid::new_v4().simple());
+    let password = SecretString::new(raw_pw.to_string());
+    let hash = crypto::hash_password(&password).expect("hash user password");
+
+    sqlx::query(
+        r#"
+        INSERT INTO public.users (id, email, full_name, password_hash, role, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(user_id)
+    .bind(&email)
+    .bind(format!("Test {}", role))
+    .bind(&hash)
+    .bind(role)
+    .bind(is_active)
+    .execute(pool)
+    .await
+    .expect("insert seeded user");
+
+    (user_id, email)
+}
+
+#[allow(dead_code)]
+pub async fn seed_api_key(pool: &PgPool, created_by: Uuid, role_scope: &str) -> (Uuid, String) {
+    let id = Uuid::new_v4();
+    let (raw_key, key_hash) = crypto::generate_api_key();
+    let key_prefix = &raw_key[..17];
+    sqlx::query(
+        r#"
+        INSERT INTO public.api_keys (id, name, key_prefix, key_hash, role_scope, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(id)
+    .bind(format!("Test Key {role_scope}"))
+    .bind(key_prefix)
+    .bind(&key_hash)
+    .bind(role_scope)
+    .bind(created_by)
+    .execute(pool)
+    .await
+    .expect("seed api key");
+
+    (id, raw_key)
+}
+
+#[allow(dead_code)]
+pub fn extract_cookie_pair(set_cookie: &str) -> String {
+    set_cookie
+        .split(';')
+        .next()
+        .map(str::trim)
+        .expect("cookie pair")
+        .to_string()
+}
+
+#[allow(dead_code)]
+pub async fn login_cookie(app: &axum::Router, email: &str, password: &str) -> String {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": email, "password": password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    extract_cookie_pair(
+        res.headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+}
+
+#[allow(dead_code)]
+pub async fn json_body(res: axum::response::Response) -> Value {
+    let bytes = to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    serde_json::from_slice(&bytes).expect("parse json body")
 }

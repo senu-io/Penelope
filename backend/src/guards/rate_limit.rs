@@ -1,5 +1,3 @@
-// bounded in-memory token-bucket rate limiter keyed by peer ip
-
 use crate::error::AppError;
 use crate::state::AppState;
 use axum::extract::{ConnectInfo, Request, State};
@@ -48,15 +46,38 @@ pub fn client_ip_from_extensions(extensions: &Extensions) -> Option<String> {
         .map(|ConnectInfo(addr)| addr.ip().to_string())
 }
 
-// group auth login/logout separately from general api traffic and keep health probes exempt
+#[derive(Debug, Clone)]
+pub struct ClientIp(pub String);
+
+#[axum::async_trait]
+impl<S> axum::extract::FromRequestParts<S> for ClientIp
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            client_ip_from_extensions(&parts.extensions).unwrap_or_default(),
+        ))
+    }
+}
+
+// keep health probes exempt and give login/logout a tighter bucket than general api traffic
 pub fn classify_rate_limit_group(method: &Method, path: &str) -> Option<RateLimitGroup> {
     if *method == Method::OPTIONS {
         return None;
     }
-    if path == "/api/v1/health/live" || path == "/api/v1/health/ready" {
+    let normalized = path.trim_end_matches('/');
+    if normalized == "/api/v1/health/live" || normalized == "/api/v1/health/ready" {
         return None;
     }
-    if *method == Method::POST && (path == "/api/v1/auth/login" || path == "/api/v1/auth/logout") {
+    if *method == Method::POST
+        && (normalized == "/api/v1/auth/login" || normalized == "/api/v1/auth/logout")
+    {
         return Some(RateLimitGroup::Auth);
     }
     if path.starts_with("/api/v1/") {
@@ -209,6 +230,10 @@ mod tests {
     fn classifies_auth_api_and_exempt_routes() {
         assert_eq!(
             classify_rate_limit_group(&Method::POST, "/api/v1/auth/login"),
+            Some(RateLimitGroup::Auth)
+        );
+        assert_eq!(
+            classify_rate_limit_group(&Method::POST, "/api/v1/auth/login/"),
             Some(RateLimitGroup::Auth)
         );
         assert_eq!(
